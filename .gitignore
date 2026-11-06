@@ -1,0 +1,20 @@
+# Entornos virtuales de Python
+.venv/
+venv/
+env/
+
+# Caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Datos temporales locales (la app genera datos semilla frescos automáticamente al iniciar)
+data/*.json
+data/*.tmp
+
+# Carpeta auxiliar de empaquetado local
+listo_para_github/
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
