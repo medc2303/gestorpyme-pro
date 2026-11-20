@@ -885,7 +885,7 @@ def render_bloque_escaner_camara(
                 options=["EXISTENTE", "BASE_CHILENA", "NUEVO"],
                 format_func=lambda t: {
                     "EXISTENTE": "📦 Producto actual de mi Inventario",
-                    "BASE_CHILENA": "🇨🇱 Elegir de la Base de Productos del Mercado Chileno (31 comunes)",
+                    "BASE_CHILENA": f"🇨🇱 Elegir de la Base de Productos del Mercado Chileno ({len(catalogo_chileno)} precargados)",
                     "NUEVO": "➕ Escribir otro producto nuevo personalizado",
                 }[t],
                 horizontal=True,

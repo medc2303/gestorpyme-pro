@@ -1,25 +1,31 @@
 """
 Módulo de Escaneo de Productos con Cámara, Relación Cruzada Imagen + Texto (OCR),
-Base Pública de Fotografías Reales (Open Food Facts Chile) y Memoria Visual del Operario.
+Reconstrucción de Fragmentos de Texto en Envases Curvos, Base Masiva de 106
+Productos Reales del Mercado Chileno (Open Food Facts + Wikimedia Commons) y
+Memoria Visual de Aprendizaje del Operario.
 
-Arquitectura de Reconocimiento Cruzado (Imagen + Texto):
-  1. AISLAMIENTO DEL OBJETO Y ELIMINACIÓN DE FONDO:
-     Enmascara los píxeles oscuros del fondo de la habitación para extraer el
-     histograma cromático y el perfil de color (rojo, azul, amarillo/naranja,
-     verde, blanco, oscuro) exclusivamente sobre el empaque iluminado.
-  2. LECTURA MULTIPASO DE TEXTO EN ENVASE (RapidOCR ONNX):
-     Lee marcas, nombres, variantes ("Zero", "Sin Calorías", "Blanco") y formatos
-     ("1.5L", "120g", "1kg") aplicando realce automático de contraste.
-  3. RELACIÓN CRUZADA OBLIGATORIA IMAGEN + TEXTO:
-     Cada candidato se evalúa cruzando su similitud visual de empaque (`sim_visual`)
-     con su coincidencia textual (`sim_texto`). Si el envase frente a la cámara tiene
-     texto legible (ej. "Coca-Cola Zero Sin Calorías 1.5L"), cualquier referencia en
-     memoria cuyo texto contradiga lo leído (ej. "McKay Kuky") queda vetada automáticamente,
-     impidiendo falsos positivos por similitud de fondo o iluminación.
-  4. BASE PÚBLICA DE IMÁGENES REALES (Open Food Facts Chile):
-     Precarga 33 fotografías reales de productos del mercado chileno desde
-     `data/catalogo_chileno_real.json` (Open Food Facts `images.openfoodfacts.org`)
-     y consulta la API pública de Open Food Facts en vivo si detecta una marca nueva.
+Mejoras clave:
+  1. BASE MASIVA DE 106 PRODUCTOS DEL MERCADO CHILENO CON FOTOGRAFÍAS REALES:
+     Incluye isotónicas (Powerade, Gatorade), energéticas (Monster, Red Bull, Score),
+     gaseosas (Coca-Cola Zero/Original, Pepsi, Fanta, Sprite, Kem Piña, Bilz, Pap,
+     Canada Dry), aguas (Cachantún, Vital, Benedictino), jugos (Watt's, Andina, Kapo),
+     lácteos y refrigerados (Soprole, Colun, Loncoleche, Chandelle, Manjar, Queso Gauda,
+     Mantequilla), galletas y confites (McKay Kuky, Tritón, Morocha, Criollitas, Soda,
+     Nik, Costa Tuareg, Frac, Gretel, Chocman, Super 8, Trencito, Sahne-Nuss, KitKat,
+     Rama, Golpe, Bon o Bon, Frugelé), snacks (Lay's, Kryzpo, Pringles, Doritos,
+     Cheetos, Ramitas, Marco Polo), abarrotes (Tucapel, Chef, Belmont, Carozzi,
+     Lucchetti, Pomarola, Iansa, Sal Lobos, Té Supremo, Yerba Mate, Nescafé, Milo,
+     Chocapic, Quaker, Selecta, Robinson Crusoe, San José, Banquete, Wasil, Hellmann's,
+     JB, Maggi, Ideal/Bimbo) y limpieza/cuidado personal (Omo, Soft, Clorinda, Quix,
+     Poett, Lysoform, Confort, Nova, Ballerina, Pepsodent, Colgate, Rexona, Dove, Ladysoft).
+  2. RECONSTRUCCIÓN DE PALABRAS PARTIDAS EN BOTELLAS CURVAS (`_tokenizar_ocr`):
+     Cuando el OCR lee palabras partidas por la curvatura del envase (como «POWER» +
+     «YYADE» en una botella de Powerade, o «GATO» + «RADE», «COCA» + «COLA»), une
+     automáticamente fragmentos adyacentes y normaliza letras repetidas («poweryyade» ->
+     «poweryade» -> 94% de coincidencia con «powerade»).
+  3. VALIDACIÓN ESTRICTA EN OPEN FOOD FACTS EN VIVO:
+     Jamás recomienda un producto en inglés o sin relación si el nombre/marca devuelto
+     por la API no supera el umbral de coincidencia textual con lo leído por el OCR.
 """
 
 from __future__ import annotations
@@ -62,7 +68,7 @@ def _obtener_motor_ocr() -> Any:
 
 
 def _cargar_fotos_reales_chile() -> dict[str, dict[str, str]]:
-    """Carga el mapa de fotografías reales descargadas desde Open Food Facts."""
+    """Carga el mapa de fotografías reales descargadas desde Open Food Facts y Wikimedia."""
     global _CACHE_FOTOS_REALES
     if _CACHE_FOTOS_REALES is not None:
         return _CACHE_FOTOS_REALES
@@ -79,548 +85,165 @@ def _cargar_fotos_reales_chile() -> dict[str, dict[str, str]]:
 
 
 # ============================================================================
-# CATÁLOGO DE PRODUCTOS COMUNES DEL MERCADO CHILENO (CON FOTOS REALES OFF)
+# BASE MASIVA DE 106 PRODUCTOS DEL MERCADO CHILENO
 # ============================================================================
 
+def _crear_item_cat(
+    sku_ref: str,
+    sku_tienda: str | None,
+    nombre: str,
+    marca: str,
+    id_cat: int,
+    peso: float,
+    unid_peso: str,
+    fmt: str,
+    upf: int,
+    compra: float,
+    venta: float,
+    perecible: bool,
+    color_p: tuple[int, int, int],
+    claves: list[str],
+) -> dict[str, Any]:
+    c2 = (max(0, color_p[0] - 45), max(0, color_p[1] - 45), max(0, color_p[2] - 45))
+    return {
+        "sku_ref": sku_ref,
+        "sku_tienda": sku_tienda,
+        "nombre": nombre,
+        "marca": marca,
+        "id_categoria": id_cat,
+        "peso": float(peso),
+        "unidad_peso": unid_peso,
+        "formato": fmt,
+        "upf": int(upf),
+        "compra": float(compra),
+        "venta": float(venta),
+        "perecible": bool(perecible),
+        "colores": (color_p, c2, (255, 255, 255)),
+        "claves": claves,
+    }
+
+
 CATALOGO_CHILENO_PRECARGADO: list[dict[str, Any]] = [
-    # --- SNACKS, GALLETAS Y CONFITERÍA CHILENA (Categoría 3) ---
-    {
-        "sku_ref": "SNK-101",
-        "sku_tienda": None,
-        "nombre": "Galletas McKay Kuky ChipChipers Blanco 120g",
-        "marca": "McKay",
-        "claves": ["kuky", "mckay", "chipchiper", "chipchipers", "cnipchipera", "blanco", "blana", "blancd"],
-        "id_categoria": 3,
-        "peso": 120.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 750.0,
-        "venta": 1290.0,
-        "perecible": True,
-        "colores": ((225, 238, 250), (30, 58, 138), (210, 38, 48)),
-    },
-    {
-        "sku_ref": "SNK-102",
-        "sku_tienda": None,
-        "nombre": "Galletas McKay Kuky Clásica Chips Chocolate 120g",
-        "marca": "McKay",
-        "claves": ["kuky", "mckay", "clasica", "chips", "chocolate"],
-        "id_categoria": 3,
-        "peso": 120.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 750.0,
-        "venta": 1290.0,
-        "perecible": True,
-        "colores": ((28, 75, 175), (92, 51, 23), (220, 38, 38)),
-    },
-    {
-        "sku_ref": "SNK-103",
-        "sku_tienda": None,
-        "nombre": "Galletas McKay Tritón Vainilla 126g",
-        "marca": "McKay",
-        "claves": ["triton", "mckay", "vainilla", "sandwich"],
-        "id_categoria": 3,
-        "peso": 126.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 720.0,
-        "venta": 1250.0,
-        "perecible": True,
-        "colores": ((20, 45, 130), (234, 88, 12), (255, 255, 255)),
-    },
-    {
-        "sku_ref": "SNK-104",
-        "sku_tienda": None,
-        "nombre": "Galletas Costa Tuareg Coco 120g",
-        "marca": "Costa",
-        "claves": ["tuareg", "costa", "coco"],
-        "id_categoria": 3,
-        "peso": 120.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 690.0,
-        "venta": 1190.0,
-        "perecible": True,
-        "colores": ((245, 195, 25), (21, 128, 61), (120, 53, 15)),
-    },
-    {
-        "sku_ref": "SNK-105",
-        "sku_tienda": None,
-        "nombre": "Galletas Costa Frac Chocolate 130g",
-        "marca": "Costa",
-        "claves": ["frac", "costa", "chocolate", "rellenas"],
-        "id_categoria": 3,
-        "peso": 130.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 690.0,
-        "venta": 1190.0,
-        "perecible": True,
-        "colores": ((185, 28, 28), (45, 25, 15), (250, 204, 21)),
-    },
-    {
-        "sku_ref": "SNK-106",
-        "sku_tienda": None,
-        "nombre": "Oblea Bañada Super 8 Nestlé 29g",
-        "marca": "Nestlé",
-        "claves": ["super8", "super", "nestle", "oblea"],
-        "id_categoria": 3,
-        "peso": 29.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 24,
-        "compra": 250.0,
-        "venta": 500.0,
-        "perecible": True,
-        "colores": ((25, 25, 30), (250, 204, 21), (220, 38, 38)),
-    },
-    {
-        "sku_ref": "SNK-107",
-        "sku_tienda": None,
-        "nombre": "Chocolate Trencito Nestlé 150g",
-        "marca": "Nestlé",
-        "claves": ["trencito", "nestle", "sahne", "nuss", "chocolate"],
-        "id_categoria": 3,
-        "peso": 150.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 1450.0,
-        "venta": 2390.0,
-        "perecible": True,
-        "colores": ((220, 38, 38), (250, 204, 21), (95, 50, 25)),
-    },
-    {
-        "sku_ref": "SNK-001",
-        "sku_tienda": "SNK-001",
-        "nombre": "Galletas Artesanales Avena",
-        "marca": "Artesanal",
-        "claves": ["galletas", "artesanales", "avena", "integral", "quaker"],
-        "id_categoria": 3,
-        "peso": 250.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 900.0,
-        "venta": 1500.0,
-        "perecible": True,
-        "colores": ((210, 180, 140), (140, 95, 50), (245, 235, 220)),
-    },
-    {
-        "sku_ref": "SNK-002",
-        "sku_tienda": "SNK-002",
-        "nombre": "Papas Fritas Clásicas 150g (Lay's / Kryzpo)",
-        "marca": "Lay's / Kryzpo",
-        "claves": ["lays", "kryzpo", "papas", "fritas", "evercrisp", "marco", "polo", "doritos"],
-        "id_categoria": 3,
-        "peso": 150.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 18,
-        "compra": 1200.0,
-        "venta": 1990.0,
-        "perecible": True,
-        "colores": ((250, 204, 21), (220, 38, 38), (255, 255, 255)),
-    },
-    # --- BEBIDAS Y LÁCTEOS CHILENOS (Categoría 1) ---
-    {
-        "sku_ref": "BEB-102",
-        "sku_tienda": None,
-        "nombre": "Bebida Coca-Cola Zero Azúcar 1.5L",
-        "marca": "Coca-Cola",
-        "claves": ["coca", "cocacola", "cocacou", "zero", "azucar", "sin", "calorias", "15l", "1.5l"],
-        "id_categoria": 1,
-        "peso": 1.5,
-        "unidad_peso": "L",
-        "formato": "LOTE",
-        "upf": 6,
-        "compra": 1250.0,
-        "venta": 1990.0,
-        "perecible": True,
-        "colores": ((210, 25, 30), (25, 20, 20), (255, 255, 255)),
-    },
-    {
-        "sku_ref": "BEB-104",
-        "sku_tienda": None,
-        "nombre": "Bebida Coca-Cola Original 1.5L",
-        "marca": "Coca-Cola",
-        "claves": ["coca", "cocacola", "cocacou", "original", "sabor", "15l", "1.5l"],
-        "id_categoria": 1,
-        "peso": 1.5,
-        "unidad_peso": "L",
-        "formato": "LOTE",
-        "upf": 6,
-        "compra": 1250.0,
-        "venta": 1990.0,
-        "perecible": True,
-        "colores": ((220, 20, 30), (255, 255, 255), (45, 15, 15)),
-    },
-    {
-        "sku_ref": "BEB-001",
-        "sku_tienda": "BEB-001",
-        "nombre": "Leche Entera 1L (Soprole / Colun)",
-        "marca": "Soprole",
-        "claves": ["soprole", "loncoleche", "surlat", "leche", "entera", "natural"],
-        "id_categoria": 1,
-        "peso": 1.0,
-        "unidad_peso": "L",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 850.0,
-        "venta": 1250.0,
-        "perecible": True,
-        "colores": ((245, 248, 255), (29, 78, 216), (220, 38, 38)),
-    },
-    {
-        "sku_ref": "BEB-101",
-        "sku_tienda": None,
-        "nombre": "Leche Entera Colun Del Sur 1L",
-        "marca": "Colun",
-        "claves": ["colun", "leche", "sur", "magia"],
-        "id_categoria": 1,
-        "peso": 1.0,
-        "unidad_peso": "L",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 860.0,
-        "venta": 1290.0,
-        "perecible": True,
-        "colores": ((245, 250, 245), (21, 128, 61), (29, 78, 216)),
-    },
-    {
-        "sku_ref": "BEB-002",
-        "sku_tienda": "BEB-002",
-        "nombre": "Agua Mineral Sin Gas 1.5L (Cachantún / Vital)",
-        "marca": "Cachantún / Vital",
-        "claves": ["cachantun", "vital", "benedictino", "agua", "mineral"],
-        "id_categoria": 1,
-        "peso": 1.5,
-        "unidad_peso": "L",
-        "formato": "LOTE",
-        "upf": 6,
-        "compra": 500.0,
-        "venta": 950.0,
-        "perecible": True,
-        "colores": ((186, 230, 253), (2, 132, 199), (255, 255, 255)),
-    },
-    {
-        "sku_ref": "BEB-003",
-        "sku_tienda": "BEB-003",
-        "nombre": "Jugo Naranja Natural 1L (Watt's / Andina)",
-        "marca": "Watt's",
-        "claves": ["watts", "watt", "andina", "nectar", "jugo", "naranja", "durazno"],
-        "id_categoria": 1,
-        "peso": 1.0,
-        "unidad_peso": "L",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 1100.0,
-        "venta": 1690.0,
-        "perecible": True,
-        "colores": ((249, 115, 22), (250, 204, 21), (21, 128, 61)),
-    },
-    {
-        "sku_ref": "BEB-004",
-        "sku_tienda": "BEB-004",
-        "nombre": "Yogurt Griego Natural 150g (Soprole / Danone)",
-        "marca": "Soprole",
-        "claves": ["yogurt", "yoghurt", "griego", "batido", "next"],
-        "id_categoria": 1,
-        "peso": 150.0,
-        "unidad_peso": "g",
-        "formato": "LOTE",
-        "upf": 6,
-        "compra": 520.0,
-        "venta": 890.0,
-        "perecible": True,
-        "colores": ((248, 250, 252), (30, 64, 175), (148, 163, 184)),
-    },
-    {
-        "sku_ref": "BEB-103",
-        "sku_tienda": None,
-        "nombre": "Bebida Kem Piña / Bilz / Pap CCU 1.5L",
-        "marca": "CCU",
-        "claves": ["kem", "pina", "bilz", "pap", "ccu", "pepsi", "fanta", "sprite"],
-        "id_categoria": 1,
-        "peso": 1.5,
-        "unidad_peso": "L",
-        "formato": "LOTE",
-        "upf": 6,
-        "compra": 1050.0,
-        "venta": 1750.0,
-        "perecible": True,
-        "colores": ((250, 204, 21), (21, 128, 61), (220, 38, 38)),
-    },
-    # --- ABARROTES Y DESPENSA CHILENA (Categoría 2) ---
-    {
-        "sku_ref": "ABA-001",
-        "sku_tienda": "ABA-001",
-        "nombre": "Arroz Grado 1 (1kg) (Tucapel / Miraflores)",
-        "marca": "Tucapel / Miraflores",
-        "claves": ["tucapel", "miraflores", "arroz", "grado", "banquete"],
-        "id_categoria": 2,
-        "peso": 1.0,
-        "unidad_peso": "kg",
-        "formato": "LOTE",
-        "upf": 10,
-        "compra": 1050.0,
-        "venta": 1590.0,
-        "perecible": True,
-        "colores": ((220, 38, 38), (245, 245, 250), (29, 78, 216)),
-    },
-    {
-        "sku_ref": "ABA-002",
-        "sku_tienda": "ABA-002",
-        "nombre": "Aceite Vegetal Maravilla 900ml (Chef / Belmont)",
-        "marca": "Chef / Belmont",
-        "claves": ["chef", "belmont", "aceite", "maravilla", "vegetal"],
-        "id_categoria": 2,
-        "peso": 900.0,
-        "unidad_peso": "ml",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 1650.0,
-        "venta": 2390.0,
-        "perecible": True,
-        "colores": ((234, 179, 8), (21, 128, 61), (254, 249, 195)),
-    },
-    {
-        "sku_ref": "ABA-003",
-        "sku_tienda": "ABA-003",
-        "nombre": "Fideos Spaghetti 400g (Carozzi / Lucchetti)",
-        "marca": "Carozzi / Lucchetti",
-        "claves": ["carozzi", "lucchetti", "talliani", "spaghetti", "fideos", "tallarines", "espirales"],
-        "id_categoria": 2,
-        "peso": 400.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 20,
-        "compra": 620.0,
-        "venta": 990.0,
-        "perecible": True,
-        "colores": ((210, 30, 35), (29, 78, 216), (245, 195, 65)),
-    },
-    {
-        "sku_ref": "ABA-102",
-        "sku_tienda": None,
-        "nombre": "Salsa de Tomates Pomarola Carozzi 200g",
-        "marca": "Carozzi",
-        "claves": ["pomarola", "salsa", "tomates", "malloa", "italiana"],
-        "id_categoria": 2,
-        "peso": 200.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 24,
-        "compra": 480.0,
-        "venta": 850.0,
-        "perecible": True,
-        "colores": ((185, 28, 28), (21, 128, 61), (255, 255, 255)),
-    },
-    {
-        "sku_ref": "ABA-103",
-        "sku_tienda": None,
-        "nombre": "Azúcar Blanca Granulada Iansa 1kg",
-        "marca": "Iansa",
-        "claves": ["iansa", "azucar", "granulada", "blanca"],
-        "id_categoria": 2,
-        "peso": 1.0,
-        "unidad_peso": "kg",
-        "formato": "LOTE",
-        "upf": 10,
-        "compra": 980.0,
-        "venta": 1490.0,
-        "perecible": False,
-        "colores": ((250, 250, 252), (29, 78, 216), (220, 38, 38)),
-    },
-    {
-        "sku_ref": "ABA-104",
-        "sku_tienda": None,
-        "nombre": "Sal de Mesa Lobos 1kg",
-        "marca": "Lobos",
-        "claves": ["lobos", "sal", "yodada", "mar"],
-        "id_categoria": 2,
-        "peso": 1.0,
-        "unidad_peso": "kg",
-        "formato": "LOTE",
-        "upf": 10,
-        "compra": 350.0,
-        "venta": 690.0,
-        "perecible": False,
-        "colores": ((30, 58, 138), (255, 255, 255), (220, 38, 38)),
-    },
-    {
-        "sku_ref": "ABA-105",
-        "sku_tienda": None,
-        "nombre": "Té Supremo Ceylán Caja 20 Bolsitas",
-        "marca": "Supremo / Club",
-        "claves": ["supremo", "club", "lipton", "ceylan", "bolsitas"],
-        "id_categoria": 2,
-        "peso": 40.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 690.0,
-        "venta": 1190.0,
-        "perecible": True,
-        "colores": ((185, 28, 28), (234, 179, 8), (120, 53, 15)),
-    },
-    {
-        "sku_ref": "ABA-106",
-        "sku_tienda": None,
-        "nombre": "Café Instantáneo Nescafé Tradición 170g",
-        "marca": "Nescafé",
-        "claves": ["nescafe", "tradicion", "cafe", "dolca", "gold", "milo"],
-        "id_categoria": 2,
-        "peso": 170.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 3400.0,
-        "venta": 5290.0,
-        "perecible": True,
-        "colores": ((75, 40, 25), (220, 38, 38), (245, 222, 179)),
-    },
-    {
-        "sku_ref": "ABA-107",
-        "sku_tienda": None,
-        "nombre": "Harina Sin Polvos Selecta 1kg",
-        "marca": "Selecta",
-        "claves": ["selecta", "harina", "trigo", "mont", "blanc"],
-        "id_categoria": 2,
-        "peso": 1.0,
-        "unidad_peso": "kg",
-        "formato": "LOTE",
-        "upf": 10,
-        "compra": 890.0,
-        "venta": 1390.0,
-        "perecible": True,
-        "colores": ((250, 245, 235), (29, 78, 216), (220, 38, 38)),
-    },
-    {
-        "sku_ref": "ABA-108",
-        "sku_tienda": None,
-        "nombre": "Atún Lomitos Robinson Crusoe 160g",
-        "marca": "Robinson Crusoe",
-        "claves": ["robinson", "crusoe", "atun", "lomitos", "jurel", "san", "jose"],
-        "id_categoria": 2,
-        "peso": 160.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 24,
-        "compra": 1150.0,
-        "venta": 1850.0,
-        "perecible": True,
-        "colores": ((15, 75, 165), (250, 204, 21), (255, 255, 255)),
-    },
-    # --- LIMPIEZA DEL HOGAR EN CHILE (Categoría 4) ---
-    {
-        "sku_ref": "LIM-001",
-        "sku_tienda": "LIM-001",
-        "nombre": "Detergente Líquido Ropa 3L (Omo / Ariel)",
-        "marca": "Omo / Ariel",
-        "claves": ["omo", "ariel", "drive", "rinso", "detergente", "matic"],
-        "id_categoria": 4,
-        "peso": 3.0,
-        "unidad_peso": "L",
-        "formato": "CAJA",
-        "upf": 4,
-        "compra": 4200.0,
-        "venta": 6490.0,
-        "perecible": False,
-        "colores": ((29, 78, 216), (220, 38, 38), (255, 255, 255)),
-    },
-    {
-        "sku_ref": "LIM-002",
-        "sku_tienda": "LIM-002",
-        "nombre": "Cloro Gel Desinfectante 1L (Clorinda / Clorox)",
-        "marca": "Clorinda / Clorox",
-        "claves": ["clorinda", "clorox", "cloro", "poett", "lysoform", "desinfectante"],
-        "id_categoria": 4,
-        "peso": 1.0,
-        "unidad_peso": "L",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 1150.0,
-        "venta": 1850.0,
-        "perecible": False,
-        "colores": ((21, 128, 61), (2, 132, 199), (255, 255, 255)),
-    },
-    {
-        "sku_ref": "LIM-101",
-        "sku_tienda": None,
-        "nombre": "Lavaloza Concentrado Quix Verde 750ml",
-        "marca": "Quix",
-        "claves": ["quix", "lavaloza", "magistral", "loza"],
-        "id_categoria": 4,
-        "peso": 750.0,
-        "unidad_peso": "ml",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 1250.0,
-        "venta": 1990.0,
-        "perecible": False,
-        "colores": ((22, 163, 74), (250, 204, 21), (255, 255, 255)),
-    },
-    {
-        "sku_ref": "LIM-102",
-        "sku_tienda": None,
-        "nombre": "Papel Higiénico Confort Doble Hoja (Pack 4)",
-        "marca": "Confort / Elite",
-        "claves": ["confort", "elite", "noble", "papel", "higienico", "nova"],
-        "id_categoria": 4,
-        "peso": 400.0,
-        "unidad_peso": "g",
-        "formato": "LOTE",
-        "upf": 12,
-        "compra": 1390.0,
-        "venta": 2290.0,
-        "perecible": False,
-        "colores": ((240, 249, 255), (2, 132, 199), (220, 38, 38)),
-    },
-    # --- CUIDADO PERSONAL EN CHILE (Categoría 5) ---
-    {
-        "sku_ref": "PER-001",
-        "sku_tienda": "PER-001",
-        "nombre": "Shampoo Hidratante 400ml (Ballerina / Sedal)",
-        "marca": "Ballerina / Sedal",
-        "claves": ["ballerina", "sedal", "pantene", "head", "shoulders", "shampoo", "familand"],
-        "id_categoria": 5,
-        "peso": 400.0,
-        "unidad_peso": "ml",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 2100.0,
-        "venta": 3490.0,
-        "perecible": True,
-        "colores": ((219, 39, 119), (250, 232, 255), (147, 51, 234)),
-    },
-    {
-        "sku_ref": "PER-002",
-        "sku_tienda": "PER-002",
-        "nombre": "Pasta Dental Triple Acción 120g (Pepsodent / Colgate)",
-        "marca": "Pepsodent / Colgate",
-        "claves": ["pepsodent", "colgate", "sensodyne", "pasta", "dental"],
-        "id_categoria": 5,
-        "peso": 120.0,
-        "unidad_peso": "g",
-        "formato": "LOTE",
-        "upf": 12,
-        "compra": 980.0,
-        "venta": 1650.0,
-        "perecible": True,
-        "colores": ((220, 38, 38), (29, 78, 216), (255, 255, 255)),
-    },
+    # 1. BEBIDAS, ISOTÓNICAS, ENERGÉTICAS, AGUAS, JUGOS Y LÁCTEOS (Cat 1)
+    _crear_item_cat("BEB-110", None, "Bebida Isotónica Powerade Mountain Blast Azul 600ml", "Powerade", 1, 600, "ml", "LOTE", 6, 850, 1490, True, (2, 132, 199), ["powerade", "power", "yyade", "poweryade", "poweryyade", "ion4", "mountain", "blast", "isotonica"]),
+    _crear_item_cat("BEB-111", None, "Bebida Isotónica Powerade Frutas Tropicales Rojo 600ml", "Powerade", 1, 600, "ml", "LOTE", 6, 850, 1490, True, (220, 38, 38), ["powerade", "power", "yyade", "poweryade", "poweryyade", "ion4", "tropicales", "frutas"]),
+    _crear_item_cat("BEB-112", None, "Bebida Isotónica Powerade Naranja 600ml", "Powerade", 1, 600, "ml", "LOTE", 6, 850, 1490, True, (249, 115, 22), ["powerade", "power", "yyade", "poweryade", "naranja", "ion4"]),
+    _crear_item_cat("BEB-113", None, "Bebida Isotónica Gatorade Cool Blue 500ml", "Gatorade", 1, 500, "ml", "LOTE", 6, 890, 1550, True, (14, 165, 233), ["gatorade", "gato", "rade", "cool", "blue", "isotonica"]),
+    _crear_item_cat("BEB-114", None, "Bebida Isotónica Gatorade Frutas Tropicales 500ml", "Gatorade", 1, 500, "ml", "LOTE", 6, 890, 1550, True, (220, 38, 38), ["gatorade", "frutas", "tropicales"]),
+    _crear_item_cat("BEB-115", None, "Bebida Energética Monster Energy Green Lata 473ml", "Monster", 1, 473, "ml", "CAJA", 6, 1250, 1990, True, (22, 163, 74), ["monster", "energy", "taurina", "473ml"]),
+    _crear_item_cat("BEB-116", None, "Bebida Energética Monster Ultra White Sin Azúcar 473ml", "Monster", 1, 473, "ml", "CAJA", 6, 1250, 1990, True, (241, 245, 249), ["monster", "ultra", "zero", "energy"]),
+    _crear_item_cat("BEB-117", None, "Bebida Energética Red Bull Lata 250ml", "Red Bull", 1, 250, "ml", "CAJA", 12, 1150, 1890, True, (29, 78, 216), ["redbull", "red", "bull", "energetica", "energy"]),
+    _crear_item_cat("BEB-118", None, "Bebida Energética Score Energy Lata 473ml", "Score", 1, 473, "ml", "CAJA", 12, 850, 1490, True, (25, 25, 30), ["score", "energy", "gorilla", "energetica"]),
+    _crear_item_cat("BEB-102", None, "Bebida Coca-Cola Zero Azúcar Sin Calorías 1.5L", "Coca-Cola", 1, 1.5, "L", "LOTE", 6, 1250, 1990, True, (210, 25, 30), ["coca", "cocacola", "cocacou", "zero", "azucar", "sin", "calorias", "calorian", "15l", "1.5l"]),
+    _crear_item_cat("BEB-104", None, "Bebida Coca-Cola Original 1.5L", "Coca-Cola", 1, 1.5, "L", "LOTE", 6, 1250, 1990, True, (220, 20, 30), ["coca", "cocacola", "cocacou", "original", "sabor", "15l", "1.5l"]),
+    _crear_item_cat("BEB-119", None, "Bebida Coca-Cola Original Lata 350ml", "Coca-Cola", 1, 350, "ml", "CAJA", 12, 580, 990, True, (220, 20, 30), ["coca", "cocacola", "350ml", "lata"]),
+    _crear_item_cat("BEB-120", None, "Bebida Pepsi Regular 1.5L", "Pepsi", 1, 1.5, "L", "LOTE", 6, 1050, 1750, True, (29, 78, 216), ["pepsi", "cola", "1.5l"]),
+    _crear_item_cat("BEB-121", None, "Bebida Pepsi Zero Sin Azúcar 1.5L", "Pepsi", 1, 1.5, "L", "LOTE", 6, 1050, 1750, True, (20, 20, 25), ["pepsi", "zero", "max", "black"]),
+    _crear_item_cat("BEB-122", None, "Bebida Fanta Naranja 1.5L", "Fanta", 1, 1.5, "L", "LOTE", 6, 1150, 1890, True, (249, 115, 22), ["fanta", "naranja", "orange"]),
+    _crear_item_cat("BEB-123", None, "Bebida Sprite Lima Limón 1.5L", "Sprite", 1, 1.5, "L", "LOTE", 6, 1150, 1890, True, (22, 163, 74), ["sprite", "lima", "limon"]),
+    _crear_item_cat("BEB-103", None, "Bebida Kem Piña CCU 1.5L", "Kem", 1, 1.5, "L", "LOTE", 6, 1050, 1750, True, (250, 204, 21), ["kem", "pina", "xtreme", "ccu"]),
+    _crear_item_cat("BEB-124", None, "Bebida Bilz CCU 1.5L", "Bilz", 1, 1.5, "L", "LOTE", 6, 1050, 1750, True, (220, 38, 38), ["bilz", "ccu", "fantasia"]),
+    _crear_item_cat("BEB-125", None, "Bebida Pap Papaya CCU 1.5L", "Pap", 1, 1.5, "L", "LOTE", 6, 1050, 1750, True, (245, 158, 11), ["pap", "papaya", "ccu"]),
+    _crear_item_cat("BEB-126", None, "Bebida Canada Dry Ginger Ale 1.5L", "Canada Dry", 1, 1.5, "L", "LOTE", 6, 1100, 1790, True, (21, 128, 61), ["canada", "dry", "ginger", "ale", "limon", "soda"]),
+    _crear_item_cat("BEB-002", "BEB-002", "Agua Mineral Cachantún Sin Gas 1.5L", "Cachantún", 1, 1.5, "L", "LOTE", 6, 500, 950, True, (186, 230, 253), ["cachantun", "agua", "mineral", "natural", "gas"]),
+    _crear_item_cat("BEB-127", None, "Agua Mineral Vital Sin Gas 1.5L", "Vital", 1, 1.5, "L", "LOTE", 6, 490, 950, True, (56, 189, 248), ["vital", "chanqueahue", "agua", "mineral"]),
+    _crear_item_cat("BEB-128", None, "Agua Purificada Benedictino Sin Gas 1.5L", "Benedictino", 1, 1.5, "L", "LOTE", 6, 480, 900, True, (125, 211, 252), ["benedictino", "agua", "purificada"]),
+    _crear_item_cat("BEB-129", None, "Agua Saborizada Cachantún Más Granada 1.5L", "Cachantún", 1, 1.5, "L", "LOTE", 6, 650, 1190, True, (244, 63, 94), ["cachantun", "mas", "granada", "saborizada"]),
+    _crear_item_cat("BEB-003", "BEB-003", "Jugo Naranja Natural 1L (Watt's)", "Watt's", 1, 1.0, "L", "CAJA", 12, 1100, 1690, True, (249, 115, 22), ["watts", "watt", "nectar", "jugo", "naranja"]),
+    _crear_item_cat("BEB-130", None, "Néctar Watt's Durazno 1L", "Watt's", 1, 1.0, "L", "CAJA", 12, 1100, 1690, True, (251, 146, 60), ["watts", "durazno", "nectar", "damasco"]),
+    _crear_item_cat("BEB-131", None, "Jugo Andina del Valle Naranja 1.5L", "Andina del Valle", 1, 1.5, "L", "LOTE", 6, 1050, 1650, True, (249, 115, 22), ["andina", "valle", "nectar", "jugo"]),
+    _crear_item_cat("BEB-132", None, "Jugo Individual Kapo Naranja / Frambuesa 200ml", "Kapo", 1, 200, "ml", "CAJA", 24, 220, 450, True, (249, 115, 22), ["kapo", "jugo", "200ml"]),
+    _crear_item_cat("BEB-001", "BEB-001", "Leche Entera Soprole 1L", "Soprole", 1, 1.0, "L", "CAJA", 12, 850, 1250, True, (245, 248, 255), ["soprole", "leche", "entera", "natural", "1l"]),
+    _crear_item_cat("BEB-133", None, "Leche Descremada Soprole 1L", "Soprole", 1, 1.0, "L", "CAJA", 12, 850, 1250, True, (186, 230, 253), ["soprole", "leche", "descremada", "semidescremada"]),
+    _crear_item_cat("BEB-101", None, "Leche Entera Colun Del Sur 1L", "Colun", 1, 1.0, "L", "CAJA", 12, 860, 1290, True, (245, 250, 245), ["colun", "leche", "sur", "magia"]),
+    _crear_item_cat("BEB-134", None, "Leche con Chocolate Colun / Soprole 200ml", "Colun", 1, 200, "ml", "CAJA", 24, 380, 690, True, (120, 53, 15), ["leche", "chocolate", "colun", "soprole", "200ml"]),
+    _crear_item_cat("BEB-135", None, "Leche Entera Loncoleche / Surlat 1L", "Loncoleche", 1, 1.0, "L", "CAJA", 12, 840, 1250, True, (240, 249, 255), ["loncoleche", "surlat", "leche", "sin", "lactosa"]),
+    _crear_item_cat("BEB-004", "BEB-004", "Yogurt Griego Natural Soprole / Danone 150g", "Soprole", 1, 150, "g", "LOTE", 6, 520, 890, True, (248, 250, 252), ["yogurt", "yoghurt", "griego", "natural", "danone"]),
+    _crear_item_cat("BEB-136", None, "Yogurt Batido Soprole Frutilla / Vainilla 125g", "Soprole", 1, 125, "g", "LOTE", 12, 280, 520, True, (251, 113, 133), ["yogurt", "batido", "soprole", "colun", "125g"]),
+    _crear_item_cat("BEB-137", None, "Yogurt con Cereal Gold / 1+1 Soprole 140g", "Soprole", 1, 140, "g", "LOTE", 12, 420, 750, True, (250, 204, 21), ["gold", "uno", "yogurt", "cereal", "yogu"]),
+    _crear_item_cat("BEB-138", None, "Postre Chandelle Nestlé Chocolate / Manjar 130g", "Nestlé", 1, 130, "g", "LOTE", 12, 480, 850, True, (120, 53, 15), ["chandelle", "postre", "flan", "soprole", "manjar"]),
+    _crear_item_cat("BEB-139", None, "Manjar Colun / Soprole Bolsa 400g", "Colun", 1, 400, "g", "CAJA", 12, 1250, 1990, True, (146, 64, 14), ["manjar", "colun", "soprole", "nestle"]),
+    _crear_item_cat("BEB-140", None, "Mantequilla Colun / Soprole Pan 250g", "Colun", 1, 250, "g", "CAJA", 12, 1850, 2790, True, (254, 240, 138), ["mantequilla", "colun", "soprole", "margarina", "calo"]),
+    _crear_item_cat("BEB-141", None, "Queso Gauda Laminado Colun / Quilque 250g", "Colun", 1, 250, "g", "CAJA", 12, 1950, 2990, True, (253, 224, 71), ["queso", "gauda", "ranco", "chanco", "colun", "quillayes"]),
+    _crear_item_cat("BEB-142", None, "Crema de Leche Colun / Nestlé 200ml", "Colun", 1, 200, "ml", "CAJA", 24, 750, 1250, True, (248, 250, 252), ["crema", "leche", "batir", "nestle", "colun"]),
+    _crear_item_cat("BEB-143", None, "Leche Condensada Nestlé Tarro 397g", "Nestlé", 1, 397, "g", "CAJA", 24, 1150, 1790, True, (241, 245, 249), ["condensada", "lechera", "ideal", "evaporada", "nestle"]),
+
+    # 2. SNACKS, GALLETAS, CHOCOLATES Y CONFITERÍA CHILENA (Cat 3)
+    _crear_item_cat("SNK-101", None, "Galletas McKay Kuky ChipChipers Blanco 120g", "McKay", 3, 120, "g", "CAJA", 12, 750, 1290, True, (225, 238, 250), ["kuky", "mckay", "chipchiper", "chipchipers", "cnipchipera", "blanco", "blana", "blancd"]),
+    _crear_item_cat("SNK-102", None, "Galletas McKay Kuky Clásica Chips Chocolate 120g", "McKay", 3, 120, "g", "CAJA", 12, 750, 1290, True, (28, 75, 175), ["kuky", "mckay", "clasica", "chips", "chocolate"]),
+    _crear_item_cat("SNK-103", None, "Galletas McKay Tritón Vainilla / Naranja 126g", "McKay", 3, 126, "g", "CAJA", 12, 720, 1250, True, (20, 45, 130), ["triton", "mckay", "vainilla", "sandwich"]),
+    _crear_item_cat("SNK-110", None, "Galletas McKay Morocha Bañadas Chocolate 100g", "McKay", 3, 100, "g", "CAJA", 12, 750, 1290, True, (245, 158, 11), ["morocha", "mckay", "chocolate"]),
+    _crear_item_cat("SNK-111", None, "Galletas McKay Criollitas / Vino / Grill 140g", "McKay", 3, 140, "g", "CAJA", 12, 650, 1150, True, (220, 38, 38), ["criollitas", "vino", "niza", "grill", "alteza", "mckay"]),
+    _crear_item_cat("SNK-112", None, "Galletas de Soda / Agua McKay Clásica 180g", "McKay", 3, 180, "g", "CAJA", 12, 680, 1190, True, (239, 68, 68), ["soda", "agua", "mckay", "saladas", "club", "social"]),
+    _crear_item_cat("SNK-113", None, "Oblea McKay Nik Vainilla / Frutilla 71g", "McKay", 3, 71, "g", "CAJA", 24, 380, 690, True, (220, 38, 38), ["nik", "oblea", "wafer", "mckay"]),
+    _crear_item_cat("SNK-104", None, "Galletas Costa Tuareg Coco 120g", "Costa", 3, 120, "g", "CAJA", 12, 690, 1190, True, (245, 195, 25), ["tuareg", "costa", "coco"]),
+    _crear_item_cat("SNK-105", None, "Galletas Costa Frac Chocolate / Vainilla 130g", "Costa", 3, 130, "g", "CAJA", 12, 690, 1190, True, (185, 28, 28), ["frac", "costa", "chocolate"]),
+    _crear_item_cat("SNK-114", None, "Galletas Costa Gretel / Mantequilla / Limón 140g", "Costa", 3, 140, "g", "CAJA", 12, 680, 1190, True, (250, 204, 21), ["gretel", "dindon", "mantequilla", "limon", "costa"]),
+    _crear_item_cat("SNK-115", None, "Bizcocho Costa Chocman / Mankeke 33g", "Costa", 3, 33, "g", "CAJA", 24, 260, 500, True, (146, 64, 14), ["chocman", "mankeke", "costa", "marinela", "pinguino", "gansito"]),
+    _crear_item_cat("SNK-106", None, "Oblea Bañada Super 8 Nestlé 29g", "Nestlé", 3, 29, "g", "CAJA", 24, 250, 500, True, (25, 25, 30), ["super8", "super", "nestle", "oblea"]),
+    _crear_item_cat("SNK-107", None, "Chocolate Trencito Nestlé Leche 150g", "Nestlé", 3, 150, "g", "CAJA", 12, 1450, 2390, True, (220, 38, 38), ["trencito", "nestle", "chocolate"]),
+    _crear_item_cat("SNK-116", None, "Chocolate Sahne-Nuss Nestlé Almendras 250g", "Nestlé", 3, 250, "g", "CAJA", 10, 2450, 3890, True, (180, 83, 9), ["sahne", "nuss", "nestle", "almendras", "golden"]),
+    _crear_item_cat("SNK-117", None, "Chocolate KitKat / Prestigio / Sublime Nestlé 41g", "Nestlé", 3, 41, "g", "CAJA", 24, 550, 990, True, (220, 38, 38), ["kitkat", "kit", "kat", "prestigio", "sublime"]),
+    _crear_item_cat("SNK-118", None, "Chocolate Costa Rama / Vizzio / Mecano 115g", "Costa", 3, 115, "g", "CAJA", 12, 1350, 2190, True, (120, 53, 15), ["rama", "vizzio", "carezza", "mecano", "orly"]),
+    _crear_item_cat("SNK-119", None, "Barra Golpe / Bon o Bon / Sapito Arcor 30g", "Ambrosoli / Arcor", 3, 30, "g", "CAJA", 24, 250, 500, True, (234, 88, 12), ["golpe", "bon", "bonobon", "sapito", "arcor", "ambrosoli"]),
+    _crear_item_cat("SNK-120", None, "Gomitas Frugelé / Loop / Flipy Ambrosoli 100g", "Ambrosoli", 3, 100, "g", "CAJA", 12, 650, 1150, True, (34, 197, 94), ["frugele", "ambrosoli", "loop", "flipy", "gomitas", "masticables"]),
+    _crear_item_cat("SNK-121", None, "Chicles / Mentas Bigtime / Grover / Menthoplus", "Arcor", 3, 18, "g", "CAJA", 20, 350, 690, True, (14, 165, 233), ["bigtime", "grover", "menthoplus", "alka", "halls", "trident", "orbit"]),
+    _crear_item_cat("SNK-001", "SNK-001", "Galletas Artesanales Avena (Quaker / Vivo)", "Quaker / Artesanal", 3, 250, "g", "CAJA", 12, 900, 1500, True, (210, 180, 140), ["galletas", "artesanales", "avena", "quaker", "vivo"]),
+    _crear_item_cat("SNK-122", None, "Barra de Cereal Cereal Bar Costa / Vivo 21g", "Costa / Vivo", 3, 21, "g", "CAJA", 20, 240, 490, True, (234, 179, 8), ["cereal", "bar", "barra", "quaker", "nature", "valley"]),
+    _crear_item_cat("SNK-002", "SNK-002", "Papas Fritas Lay's Corte Americano 150g", "Lay's", 3, 150, "g", "CAJA", 18, 1200, 1990, True, (250, 204, 21), ["lays", "papas", "fritas", "corte", "americano", "evercrisp"]),
+    _crear_item_cat("SNK-123", None, "Papas Fritas Kryzpo / Pringles Tarro 140g", "Kryzpo / Pringles", 3, 140, "g", "CAJA", 12, 1350, 2190, True, (220, 38, 38), ["kryzpo", "pringles", "papas", "tarro"]),
+    _crear_item_cat("SNK-124", None, "Snack Doritos Queso Nacho Evercrisp 140g", "Doritos", 3, 140, "g", "CAJA", 14, 1150, 1890, True, (234, 88, 12), ["doritos", "nacho", "queso", "evercrisp"]),
+    _crear_item_cat("SNK-125", None, "Snack Cheetos / Ramitas / Fritos Evercrisp 130g", "Evercrisp", 3, 130, "g", "CAJA", 14, 950, 1590, True, (249, 115, 22), ["cheetos", "ramitas", "fritos", "chispop", "gatolate", "twistos"]),
+    _crear_item_cat("SNK-126", None, "Maní Salado / Japonés Marco Polo 120g", "Marco Polo", 3, 120, "g", "CAJA", 16, 750, 1290, True, (185, 28, 28), ["marco", "polo", "mani", "salado", "japones", "nueces", "almendras"]),
+
+    # 3. ABARROTES, DESPENSA, CONSERVAS Y DESAYUNO CHILENO (Cat 2)
+    _crear_item_cat("ABA-001", "ABA-001", "Arroz Grado 1 (1kg) (Tucapel / Miraflores)", "Tucapel", 2, 1.0, "kg", "LOTE", 10, 1050, 1590, True, (220, 38, 38), ["tucapel", "miraflores", "arroz", "grado", "banquete", "1kg"]),
+    _crear_item_cat("ABA-002", "ABA-002", "Aceite Vegetal Maravilla 900ml (Chef / Belmont)", "Chef / Belmont", 2, 900, "ml", "CAJA", 12, 1650, 2390, True, (234, 179, 8), ["chef", "belmont", "natura", "aceite", "maravilla", "vegetal", "900ml"]),
+    _crear_item_cat("ABA-120", None, "Aceite de Oliva Extra Virgen Chef / Traverso 500ml", "Chef / Traverso", 2, 500, "ml", "CAJA", 12, 3400, 5290, True, (21, 128, 61), ["oliva", "virgen", "traverso", "carbonell"]),
+    _crear_item_cat("ABA-003", "ABA-003", "Fideos Spaghetti Nº5 400g (Carozzi / Lucchetti)", "Carozzi", 2, 400, "g", "CAJA", 20, 620, 990, True, (210, 30, 35), ["carozzi", "lucchetti", "talliani", "spaghetti", "fideos", "tallarines"]),
+    _crear_item_cat("ABA-121", None, "Fideos Espirales / Corbatas Lucchetti / Carozzi 400g", "Lucchetti", 2, 400, "g", "CAJA", 20, 640, 1050, True, (29, 78, 216), ["espirales", "corbatas", "coditos", "cabello", "lucchetti", "carozzi"]),
+    _crear_item_cat("ABA-102", None, "Salsa de Tomates Pomarola Carozzi / Malloa 200g", "Carozzi", 2, 200, "g", "CAJA", 24, 480, 850, True, (185, 28, 28), ["pomarola", "salsa", "tomates", "malloa", "italiana", "tuco"]),
+    _crear_item_cat("ABA-103", None, "Azúcar Blanca Granulada Iansa 1kg", "Iansa", 2, 1.0, "kg", "LOTE", 10, 980, 1490, False, (250, 250, 252), ["iansa", "azucar", "granulada", "blanca"]),
+    _crear_item_cat("ABA-122", None, "Endulzante Líquido Stevia / Sucralosa Iansa Cero K / Daily", "Iansa / Daily", 2, 180, "ml", "CAJA", 12, 1450, 2290, True, (34, 197, 94), ["endulzante", "stevia", "sucralosa", "daily", "cerok"]),
+    _crear_item_cat("ABA-104", None, "Sal de Mesa Lobos 1kg", "Lobos", 2, 1.0, "kg", "LOTE", 10, 350, 690, False, (30, 58, 138), ["lobos", "sal", "yodada", "mar"]),
+    _crear_item_cat("ABA-105", None, "Té Supremo / Club Ceylán Caja 20 Bolsitas", "Supremo / Club", 2, 40, "g", "CAJA", 12, 690, 1190, True, (185, 28, 28), ["supremo", "club", "lipton", "ceylan", "bolsitas"]),
+    _crear_item_cat("ABA-123", None, "Yerba Mate Taragüi / CBSE / Supremo 500g", "Taragüi / Supremo", 2, 500, "g", "LOTE", 10, 1650, 2590, True, (220, 38, 38), ["yerba", "mate", "taragui", "cbse", "pipore"]),
+    _crear_item_cat("ABA-106", None, "Café Instantáneo Nescafé Tradición Tarro 170g", "Nescafé", 2, 170, "g", "CAJA", 12, 3400, 5290, True, (75, 40, 25), ["nescafe", "tradicion", "cafe", "dolca", "gold", "cruzeiro"]),
+    _crear_item_cat("ABA-124", None, "Alimento en Polvo Milo Nestlé 400g", "Nestlé", 2, 400, "g", "CAJA", 12, 2350, 3690, True, (22, 163, 74), ["milo", "nesquik", "cacao", "colacao"]),
+    _crear_item_cat("ABA-125", None, "Cereal Desayuno Chocapic / Trix / Zucosos Nestlé 350g", "Nestlé", 2, 350, "g", "CAJA", 12, 1950, 3190, True, (146, 64, 14), ["chocapic", "trix", "zucosos", "estrellitas", "kelloggs", "zucaritas"]),
+    _crear_item_cat("ABA-126", None, "Avena Instantánea Quaker / Carozzi 500g", "Quaker", 2, 500, "g", "CAJA", 12, 1150, 1790, True, (29, 78, 216), ["quaker", "avena", "instantanea", "tradicional"]),
+    _crear_item_cat("ABA-107", None, "Harina de Trigo Selecta / Mont Blanc 1kg", "Selecta", 2, 1.0, "kg", "LOTE", 10, 890, 1390, True, (250, 245, 235), ["selecta", "harina", "trigo", "mont", "blanc", "polvos"]),
+    _crear_item_cat("ABA-108", None, "Atún Lomitos Robinson Crusoe / San José 160g", "Robinson Crusoe", 2, 160, "g", "CAJA", 24, 1150, 1850, True, (15, 75, 165), ["robinson", "crusoe", "atun", "lomitos", "vancamps"]),
+    _crear_item_cat("ABA-127", None, "Jurel Tipo Salmón San José / Único Tarro 425g", "San José", 2, 425, "g", "CAJA", 24, 1250, 1990, True, (220, 38, 38), ["jurel", "salmon", "sanjose", "unico", "colorado"]),
+    _crear_item_cat("ABA-128", None, "Legumbres Lentejas / Porotos / Garbanzos Banquete 1kg", "Banquete / Iansa", 2, 1.0, "kg", "LOTE", 10, 1650, 2590, True, (180, 83, 9), ["lentejas", "porotos", "garbanzos", "arvejas", "wasil", "banquete"]),
+    _crear_item_cat("ABA-129", None, "Conserva Duraznos en Mitades Wasil / Dos Caballos 590g", "Wasil", 2, 590, "g", "CAJA", 12, 1450, 2290, True, (245, 158, 11), ["duraznos", "mitades", "conserva", "wasil", "caballos", "pina"]),
+    _crear_item_cat("ABA-130", None, "Mayonesa Hellmann's / Kraft / JB Doypack 400g", "Hellmann's / JB", 2, 400, "g", "CAJA", 12, 1550, 2490, True, (254, 249, 195), ["hellmanns", "mayonesa", "kraft", "alacena", "supreme"]),
+    _crear_item_cat("ABA-131", None, "Ketchup / Mostaza JB / Hellmann's 380g", "JB / Heinz", 2, 380, "g", "CAJA", 12, 1150, 1850, True, (220, 38, 38), ["ketchup", "mostaza", "heinz", "jb", "malloa"]),
+    _crear_item_cat("ABA-132", None, "Sopa / Crema / Caldo Maggi Sobre 68g", "Maggi", 2, 68, "g", "CAJA", 24, 480, 850, True, (250, 204, 21), ["maggi", "sopa", "caldo", "costilla", "gallina", "gourmet", "pure"]),
+    _crear_item_cat("ABA-133", None, "Pan de Molde Blanco / Integral Ideal / Bimbo 550g", "Ideal / Bimbo", 2, 550, "g", "LOTE", 6, 1550, 2390, True, (245, 245, 250), ["ideal", "bimbo", "castano", "pan", "molde", "tortillas", "rapiditas"]),
+    _crear_item_cat("ABA-134", None, "Mermelada Watt's Mora / Frutilla / Damasco 250g", "Watt's", 2, 250, "g", "CAJA", 12, 850, 1390, True, (190, 18, 60), ["mermelada", "watts", "mora", "frutilla", "damasco"]),
+
+    # 4. LIMPIEZA DEL HOGAR Y PAPEL EN CHILE (Cat 4)
+    _crear_item_cat("LIM-001", "LIM-001", "Detergente Líquido Ropa 3L (Omo / Ariel / Drive)", "Omo / Ariel", 4, 3.0, "L", "CAJA", 4, 4200, 6490, False, (29, 78, 216), ["omo", "ariel", "drive", "rinso", "ace", "fuzol", "detergente", "matic"]),
+    _crear_item_cat("LIM-110", None, "Suavizante de Ropa Soft / Downy 1L", "Soft / Downy", 4, 1.0, "L", "CAJA", 12, 1650, 2590, False, (56, 189, 248), ["soft", "downy", "suavizante", "fuzol"]),
+    _crear_item_cat("LIM-002", "LIM-002", "Cloro Gel Desinfectante 1L (Clorinda / Clorox)", "Clorinda / Clorox", 4, 1.0, "L", "CAJA", 12, 1150, 1850, False, (21, 128, 61), ["clorinda", "clorox", "cloro", "gel", "desinfectante"]),
+    _crear_item_cat("LIM-101", None, "Lavaloza Concentrado Quix / Magistral 750ml", "Quix", 4, 750, "ml", "CAJA", 12, 1250, 1990, False, (22, 163, 74), ["quix", "magistral", "lavaloza", "loza", "sapolio"]),
+    _crear_item_cat("LIM-111", None, "Limpiador de Pisos Poett / Fabuloso Lavanda 900ml", "Poett", 4, 900, "ml", "CAJA", 12, 1150, 1850, False, (147, 51, 234), ["poett", "fabuloso", "limpiador", "lavanda", "aromatizante", "glade"]),
+    _crear_item_cat("LIM-112", None, "Desinfectante Aerosol Lysoform / Cif Crema 400ml", "Lysoform / Cif", 4, 400, "ml", "CAJA", 12, 1950, 3190, False, (2, 132, 199), ["lysoform", "cif", "musculo", "virutex", "raid", "tanax"]),
+    _crear_item_cat("LIM-102", None, "Papel Higiénico Confort / Elite Doble Hoja (Pack 4)", "Confort / Elite", 4, 400, "g", "LOTE", 12, 1390, 2290, False, (240, 249, 255), ["confort", "elite", "noble", "favorita", "papel", "higienico"]),
+    _crear_item_cat("LIM-113", None, "Toalla de Papel Absorbente Nova / Elite (Pack 2)", "Nova / Elite", 4, 300, "g", "LOTE", 12, 1250, 1990, False, (248, 250, 252), ["nova", "toalla", "absorbente", "servilletas", "abo"]),
+
+    # 5. CUIDADO PERSONAL, HIGIENE Y PERFUMERÍA EN CHILE (Cat 5)
+    _crear_item_cat("PER-001", "PER-001", "Shampoo Hidratante 400ml (Ballerina / Sedal / Pantene)", "Ballerina / Sedal", 5, 400, "ml", "CAJA", 12, 2100, 3490, True, (219, 39, 119), ["ballerina", "sedal", "pantene", "shoulders", "shampoo", "familand", "fructis", "elvive", "acondicionador"]),
+    _crear_item_cat("PER-002", "PER-002", "Pasta Dental Triple Acción 120g (Pepsodent / Colgate)", "Pepsodent / Colgate", 5, 120, "g", "LOTE", 12, 980, 1650, True, (220, 38, 38), ["pepsodent", "colgate", "sensodyne", "oralb", "pasta", "dental"]),
+    _crear_item_cat("PER-110", None, "Desodorante Aerosol / Roll-On Rexona / Dove / Axe 150ml", "Rexona / Dove", 5, 150, "ml", "CAJA", 12, 1850, 2990, True, (30, 58, 138), ["rexona", "dove", "nivea", "axe", "old", "spice", "speed", "stick", "desodorante"]),
+    _crear_item_cat("PER-111", None, "Jabón en Barra / Líquido Dove / Le Sancy / Lux 90g", "Dove / Le Sancy", 5, 90, "g", "CAJA", 24, 650, 1150, True, (241, 245, 249), ["dove", "sancy", "lux", "protex", "jabon", "simonds", "glicerina"]),
+    _crear_item_cat("PER-112", None, "Toallas Higiénicas Ladysoft / Kotex / Always (Pack 8)", "Ladysoft / Kotex", 5, 120, "g", "CAJA", 18, 950, 1590, False, (236, 72, 153), ["ladysoft", "kotex", "always", "nosotras", "panales", "pampers", "huggies", "emubaby"]),
 ]
 
 
 def obtener_catalogo_chileno_referencia() -> list[dict[str, Any]]:
-    """Retorna la base precargada de productos comunes del mercado chileno."""
+    """Retorna la base masiva precargada de 106 productos comunes del mercado chileno."""
     return CATALOGO_CHILENO_PRECARGADO
 
 
@@ -630,10 +253,7 @@ def obtener_catalogo_chileno_referencia() -> list[dict[str, Any]]:
 
 
 def _recortar_objeto_activo(img: Image.Image) -> Image.Image:
-    """
-    Aísla la caja delimitadora 2D del producto iluminado descartando el fondo
-    oscuro de la habitación tanto en filas como en columnas.
-    """
+    """Aísla la caja delimitadora 2D del producto iluminado descartando el fondo oscuro."""
     arr = np.asarray(img.convert("RGB"), dtype=np.float32)
     h, w, _ = arr.shape
     if h < 32 or w < 32:
@@ -641,7 +261,6 @@ def _recortar_objeto_activo(img: Image.Image) -> Image.Image:
 
     max_rgb = arr.max(axis=2)
     sat = (max_rgb - arr.min(axis=2)) / np.maximum(max_rgb, 1.0)
-    # Píxel pertenece al objeto si tiene brillo suficiente o color saturado
     mascara = (max_rgb > 46.0) | ((max_rgb > 32.0) & (sat > 0.28))
 
     prop_filas = mascara.mean(axis=1)
@@ -703,7 +322,7 @@ def _calcular_descriptores_color(
     Extrae:
       1. `grid_color` (48 floats): grilla espacial 4x4x3 del objeto.
       2. `hist_color` (48 floats): histograma cromático calculado EXCLUSIVAMENTE sobre
-         los píxeles activos del producto (ignorando píxeles negros del fondo de la sala).
+         los píxeles activos del producto (ignorando píxeles negros del fondo).
       3. `perfil_color` (6 floats): proporción semántica de colores del empaque
          [rojo, azul_celeste, amarillo_naranja, verde, blanco_claro, oscuro_cafe].
     """
@@ -718,7 +337,6 @@ def _calcular_descriptores_color(
     min_c = np.minimum(np.minimum(r_ch, g_ch), b_ch)
     diff_c = max_c - min_c
 
-    # Máscara de primer plano: descartar fondo negro/oscuro sin color
     mask_fg = max_c >= 42.0
     if int(mask_fg.sum()) < 64:
         mask_fg = np.ones_like(max_c, dtype=bool)
@@ -730,7 +348,6 @@ def _calcular_descriptores_color(
     fg_diff = diff_c[mask_fg]
     n_fg = float(len(fg_r))
 
-    # Perfil semántico de 6 familias cromáticas sobre el objeto real
     es_rojo = (fg_r > 100.0) & (fg_r > fg_g * 1.32) & (fg_r > fg_b * 1.32)
     es_azul = (fg_b > 85.0) & (fg_b > fg_r * 1.15) & (fg_b >= fg_g * 0.95)
     es_amarillo_naranja = (
@@ -756,13 +373,11 @@ def _calcular_descriptores_color(
         [round(float(x / norm_p), 4) for x in perfil] if norm_p > 1e-6 else [0.0] * 6
     )
 
-    # Normalizar contraste solo con percentiles de píxeles del objeto
     p5 = float(np.percentile(peq[mask_fg], 5))
     p95 = float(np.percentile(peq[mask_fg], 95))
     rango = max(25.0, p95 - p5)
     norm_img = np.clip((peq - p5) / rango, 0.0, 1.0)
 
-    # Histograma de 48 bins solo sobre píxeles del primer plano (mask_fg)
     bins = np.linspace(0.0, 1.0001, 17)
     h_r, _ = np.histogram(norm_img[:, :, 0][mask_fg], bins=bins)
     h_g, _ = np.histogram(norm_img[:, :, 1][mask_fg], bins=bins)
@@ -773,7 +388,6 @@ def _calcular_descriptores_color(
         [round(float(x / norma_h), 4) for x in hist] if norma_h > 1e-6 else [0.0] * 48
     )
 
-    # Grilla espacial 4x4x3 sobre la zona central (evitando esquinas de fondo)
     central = norm_img[8:56, 8:56, :]
     grid = (
         np.asarray(
@@ -793,10 +407,7 @@ def _calcular_descriptores_color(
 
 
 def _extraer_texto_ocr(img_recortada: Image.Image) -> list[str]:
-    """
-    Ejecuta RapidOCR en doble pasada (imagen original + imagen con realce de contraste
-    y nitidez) para capturar tanto letras claras como textos oscuros sobre etiquetas rojas/azules.
-    """
+    """Ejecuta RapidOCR en doble pasada con realce de contraste."""
     motor = _obtener_motor_ocr()
     if motor is None:
         return []
@@ -882,8 +493,7 @@ def extraer_huella_visual(
 def generar_imagen_referencia_chilena(item_chileno: dict[str, Any]) -> bytes:
     """
     Retorna la fotografía real del producto chileno descargada desde Open Food Facts
-    (`data/catalogo_chileno_real.json`). Si algún SKU no tuviera foto en caché,
-    genera un respaldo visual con sus colores.
+    o Wikimedia Commons (`data/catalogo_chileno_real.json`).
     """
     fotos_reales = _cargar_fotos_reales_chile()
     sku = item_chileno.get("sku_ref") or item_chileno.get("sku_tienda") or ""
@@ -911,10 +521,7 @@ def generar_imagen_referencia_chilena(item_chileno: dict[str, Any]) -> bytes:
 
 
 def _construir_base_visual_chilena_por_defecto() -> list[dict[str, Any]]:
-    """
-    Construye la base precargada de 33 referencias del mercado chileno utilizando
-    las fotografías reales descargadas desde Open Food Facts (`catalogo_chileno_real.json`).
-    """
+    """Construye la base masiva de 106 referencias del mercado chileno con sus fotos reales."""
     categorias_map = {
         1: "Bebidas y Lácteos",
         2: "Abarrotes y Despensa",
@@ -965,7 +572,7 @@ def _construir_base_visual_chilena_por_defecto() -> list[dict[str, Any]]:
 
 
 # ============================================================================
-# RELACIÓN CRUZADA ENTRE IMAGEN Y TEXTO (CROSS-MODAL SCORING)
+# RELACIÓN CRUZADA IMAGEN + TEXTO CON RECONSTRUCCIÓN DE PALABRAS PARTIDAS
 # ============================================================================
 
 
@@ -989,24 +596,41 @@ def _similitud_hamming_hex(h1: str, h2: str) -> float:
         return 0.0
 
 
-def _tokenizar_ocr(textos: list[str]) -> list[str]:
+def _tokenizar_ocr(textos: list[str], reconstruir_pares: bool = False) -> list[str]:
+    """
+    Convierte textos leídos por OCR en tokens limpios.
+    Si `reconstruir_pares=True` (para lecturas de cámara en botellas o envases curvos),
+    une además fragmentos adyacentes y elimina letras duplicadas por distorsión óptica
+    (ej. ['POWER', 'YYADE'] -> genera también 'poweryyade' y 'poweryade' -> coincide con 'powerade').
+    """
     stopwords = {"clear", "photo", "take", "con", "por", "para", "del", "las", "los"}
-    tokens: list[str] = []
+    tokens_base: list[str] = []
     for frase in textos:
         for t in re.split(r"[\s\-\.,/]+", frase.lower()):
             limpio = re.sub(r"[^a-záéíóúüñ0-9]+", "", t)
-            if len(limpio) >= 3 and limpio not in stopwords and limpio not in tokens:
-                tokens.append(limpio)
-    return tokens
+            if len(limpio) >= 3 and limpio not in stopwords and limpio not in tokens_base:
+                tokens_base.append(limpio)
+
+    if not reconstruir_pares or len(tokens_base) < 2:
+        return tokens_base
+
+    tokens_expandidos = list(tokens_base)
+    for i in range(len(tokens_base) - 1):
+        unido = tokens_base[i] + tokens_base[i + 1]
+        if 5 <= len(unido) <= 18 and unido not in tokens_expandidos:
+            tokens_expandidos.append(unido)
+        # Versión sin letras duplicadas consecutivas (ej. "poweryyade" -> "poweryade")
+        colapsado = re.sub(r"(.)\1+", r"\1", unido)
+        if 5 <= len(colapsado) <= 18 and colapsado not in tokens_expandidos:
+            tokens_expandidos.append(colapsado)
+
+    return tokens_expandidos
 
 
 def calcular_similitud_solo_imagen(
     huella_nueva: dict[str, Any], huella_ref: dict[str, Any]
 ) -> float:
-    """
-    Calcula la similitud puramente visual (0 a 100%) sobre los píxeles del objeto
-    (excluyendo el fondo oscuro de la habitación).
-    """
+    """Calcula la similitud visual (0 a 100%) sobre los píxeles del objeto sin fondo."""
     sim_hist = _similitud_coseno(
         huella_nueva.get("hist_color", []), huella_ref.get("hist_color", [])
     )
@@ -1038,8 +662,8 @@ def calcular_similitud_solo_texto(
     tokens_captura: list[str], tokens_candidato: list[str]
 ) -> tuple[float, list[str]]:
     """
-    Evalúa cuánto coincide el texto OCR leído en la cámara con las palabras clave
-    del producto candidato. Retorna `(puntaje_0_a_100, palabras_coincidentes)`.
+    Evalúa cuánto coincide el texto OCR leído en la cámara (incluyendo palabras
+    reconstruidas de fragmentos curvos) con las palabras clave del producto candidato.
     """
     if not tokens_captura or not tokens_candidato:
         return 0.0, []
@@ -1053,22 +677,21 @@ def calcular_similitud_solo_texto(
             if tk_cap == tk_ref:
                 mejor_ratio = 1.0
                 break
-            if len(tk_ref) >= 4 and (tk_ref in tk_cap or tk_cap in tk_ref):
-                mejor_ratio = max(mejor_ratio, 0.92)
+            if len(tk_ref) >= 5 and len(tk_cap) >= 4 and (tk_ref in tk_cap or tk_cap in tk_ref):
+                mejor_ratio = max(mejor_ratio, 0.90)
             else:
                 r = SequenceMatcher(None, tk_cap, tk_ref).ratio()
                 if r > mejor_ratio:
                     mejor_ratio = r
 
-        if mejor_ratio >= 0.74:
+        if mejor_ratio >= 0.75:
             puntaje_acum += mejor_ratio
             coincidentes.append(tk_cap)
 
     if not coincidentes:
         return 0.0, []
 
-    # Si coincide 1 palabra de marca fuerte (>=74%) ya tiene base >= 68 pts, y sube con cada palabra adicional
-    base = 65.0 + min(34.0, (puntaje_acum - 0.74) * 22.0 + (len(coincidentes) - 1) * 10.0)
+    base = 68.0 + min(31.0, (puntaje_acum - 0.75) * 22.0 + (len(coincidentes) - 1) * 9.0)
     return round(min(99.0, max(0.0, base)), 1), coincidentes
 
 
@@ -1078,40 +701,35 @@ def calcular_relacion_cruzada_imagen_texto(
     hay_texto_en_captura: bool,
 ) -> dict[str, Any]:
     """
-    Realiza la validación cruzada entre la Imagen capturada y el Texto OCR leído:
-      - Si la cámara leyó texto en el envase y el candidato coincide tanto en Texto
-        como en Imagen, combina ambos puntajes con sinergia positiva.
-      - Si la cámara leyó texto en el envase (ej. "Coca-Cola Sin Calorías 1.5L") pero
-        el candidato en memoria tiene un texto totalmente distinto (ej. "McKay Kuky"),
-        aplica un VETO POR CONTRADICCIÓN TEXTUAL para que jamás devuelva Galletas
-        cuando frente a la cámara hay otro producto con etiqueta legible.
+    Cruza la similitud de la Imagen (color/estructura sin fondo) con el Texto OCR leído:
+      - Si el texto leído en cámara (o su reconstrucción de fragmentos curvos, ej.
+        'POWER' + 'YYADE' -> 'POWERADE') coincide con el candidato, suma la similitud
+        visual del envase (ej. diferenciando Powerade Azul vs Powerade Rojo vs Naranja).
+      - Si el candidato contradice el texto leído en cámara, queda vetado.
     """
     huella_ref = ref_candidato.get("huella", {})
     sim_img = calcular_similitud_solo_imagen(huella_captura, huella_ref)
 
-    tokens_cap = _tokenizar_ocr(huella_captura.get("textos_ocr", []))
+    tokens_cap = _tokenizar_ocr(huella_captura.get("textos_ocr", []), reconstruir_pares=True)
     textos_ref = list(huella_ref.get("textos_ocr", [])) + [
         str(ref_candidato.get("nombre_producto", "")),
         str(ref_candidato.get("marca", "")),
     ]
-    tokens_ref = _tokenizar_ocr(textos_ref)
+    tokens_ref = _tokenizar_ocr(textos_ref, reconstruir_pares=False)
 
     sim_txt, palabras_match = calcular_similitud_solo_texto(tokens_cap, tokens_ref)
 
     if hay_texto_en_captura:
         if sim_txt >= 55.0:
-            # Coincidencia cruzada Imagen + Texto
             bono_coherencia = 10.0 if sim_img >= 45.0 else 0.0
             score_cruzado = min(
-                99.0, 0.60 * sim_txt + 0.40 * sim_img + bono_coherencia
+                99.0, 0.58 * sim_txt + 0.42 * sim_img + bono_coherencia
             )
             modo_cruce = "IMAGEN_Y_TEXTO_COINCIDENTES"
         else:
-            # Contradicción: el envase en cámara dice un texto que NO pertenece a este candidato
-            score_cruzado = sim_img * 0.22
+            score_cruzado = sim_img * 0.20
             modo_cruce = "VETADO_POR_TEXTO_DISTINTO"
     else:
-        # La captura no tiene texto legible: evaluar puramente por imagen sin fondo
         score_cruzado = sim_img
         modo_cruce = "SOLO_IMAGEN"
 
@@ -1127,8 +745,7 @@ def calcular_relacion_cruzada_imagen_texto(
 def calcular_similitud_visual(
     huella_nueva: dict[str, Any], huella_ref: dict[str, Any]
 ) -> float:
-    """Función compatible de similitud cruzada entre dos huellas."""
-    tokens_cap = _tokenizar_ocr(huella_nueva.get("textos_ocr", []))
+    tokens_cap = _tokenizar_ocr(huella_nueva.get("textos_ocr", []), reconstruir_pares=True)
     res = calcular_relacion_cruzada_imagen_texto(
         huella_nueva,
         {"huella": huella_ref},
@@ -1138,14 +755,14 @@ def calcular_similitud_visual(
 
 
 # ============================================================================
-# PERSISTENCIA DE MEMORIA VISUAL Y CONSULTA EN VIVO A OPEN FOOD FACTS
+# PERSISTENCIA DE MEMORIA VISUAL Y BÚSQUEDA VERIFICADA EN OPEN FOOD FACTS
 # ============================================================================
 
 
 def cargar_memoria_visual() -> list[dict[str, Any]]:
     """
-    Carga la Memoria Visual. Garantiza que las 33 referencias con fotografías reales
-    de Open Food Facts Chile estén siempre actualizadas y disponibles.
+    Carga la Memoria Visual garantizando que las 106 referencias del mercado chileno
+    con sus fotografías reales estén siempre activas.
     """
     DIRECTORIO_DATOS.mkdir(parents=True, exist_ok=True)
     existentes: list[dict[str, Any]] = []
@@ -1160,14 +777,12 @@ def cargar_memoria_visual() -> list[dict[str, Any]]:
     refs_chilenas = [
         r for r in existentes if r.get("origen") == "BASE_CHILENA_PRECARGADA"
     ]
-    # Verificar que las referencias chilenas tengan el nuevo descriptor `perfil_color` y fotos reales
-    tiene_perfil_y_fotos = (
-        len(refs_chilenas) >= 30
+    tiene_base_106 = (
+        len(refs_chilenas) >= 100
         and all("perfil_color" in r.get("huella", {}) for r in refs_chilenas[:5])
-        and any("Open Food Facts" in str(r.get("fuente_imagen", "")) for r in refs_chilenas)
     )
 
-    if not tiene_perfil_y_fotos:
+    if not tiene_base_106:
         aprendidas_operario = [
             r for r in existentes if r.get("origen") != "BASE_CHILENA_PRECARGADA"
         ]
@@ -1197,10 +812,7 @@ def guardar_referencia_memoria_visual(
     datos_producto: dict[str, Any],
     origen: str = "CORRECCION_OPERARIO",
 ) -> dict[str, Any]:
-    """
-    Guarda en la Memoria Visual la imagen capturada por cámara junto a su texto OCR
-    y el producto confirmado o corregido por el operario.
-    """
+    """Guarda inmediatamente en la Memoria Visual la imagen y el producto confirmado por el operario."""
     huella = extraer_huella_visual(imagen_bytes, incluir_ocr=True)
     referencias = cargar_memoria_visual()
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1255,7 +867,7 @@ def guardar_referencia_memoria_visual(
 
     if not reemplazado:
         referencias.insert(0, registro)
-        referencias = referencias[:95]
+        referencias = referencias[:150]
 
     guardar_memoria_visual(referencias)
     return registro
@@ -1296,70 +908,82 @@ def _consultar_openfoodfacts_en_vivo(
     categorias: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     """
-    Si el texto OCR leído en el envase corresponde a un producto que no está en las
-    33 referencias locales, consulta en vivo la base pública Open Food Facts
-    (`https://search.openfoodfacts.org/search`) y valida su imagen.
+    Si el texto OCR leído corresponde a un producto que no está entre las 106
+    referencias locales, consulta Open Food Facts en vivo PERO exige validación
+    estricta: el nombre o marca devuelto por la API DEBE coincidir textualmente
+    (>= 75%) con las palabras leídas por el OCR, impidiendo recomendaciones incoherentes.
     """
-    tokens = _tokenizar_ocr(textos_ocr)
-    if not tokens:
+    tokens_expandidos = _tokenizar_ocr(textos_ocr, reconstruir_pares=True)
+    if not tokens_expandidos:
         return None
 
-    consulta = " ".join(tokens[:3])
+    # Probar con los tokens más largos/representativos (incluyendo palabras reconstruidas)
+    candidatos_query = sorted(tokens_expandidos, key=len, reverse=True)[:3]
     try:
-        r = requests.get(
-            "https://search.openfoodfacts.org/search",
-            params={"q": consulta, "page_size": 3},
-            headers={"User-Agent": "GestorPyMEPro/1.0"},
-            timeout=5,
-        )
-        if r.status_code != 200:
-            return None
-        hits = r.json().get("hits", [])
-        if not hits:
-            return None
+        for q in candidatos_query:
+            r = requests.get(
+                "https://search.openfoodfacts.org/search",
+                params={"q": q, "page_size": 5},
+                headers={"User-Agent": "GestorPyMEPro/2.0"},
+                timeout=4,
+            )
+            if r.status_code != 200:
+                continue
+            for hit in r.json().get("hits", []):
+                nom_hit = (
+                    hit.get("product_name_es")
+                    or hit.get("product_name")
+                    or ""
+                ).strip()
+                marcas_hit = hit.get("brands") or []
+                marca_str = (
+                    marcas_hit[0]
+                    if isinstance(marcas_hit, list) and marcas_hit
+                    else str(marcas_hit or "")
+                ).strip()
+                if not nom_hit and not marca_str:
+                    continue
 
-        mejor_hit = hits[0]
-        nombre_off = (
-            mejor_hit.get("product_name_es")
-            or mejor_hit.get("product_name")
-            or consulta.title()
-        ).strip()
-        marcas_off = mejor_hit.get("brands") or []
-        marca_str = marcas_off[0] if isinstance(marcas_off, list) and marcas_off else str(marcas_off or "")
-        if marca_str and marca_str.lower() not in nombre_off.lower():
-            nombre_completo = f"{nombre_off} ({marca_str})".strip()
-        else:
-            nombre_completo = nombre_off
+                tokens_hit = _tokenizar_ocr([nom_hit, marca_str], reconstruir_pares=False)
+                sim_t, _ = calcular_similitud_solo_texto(tokens_expandidos, tokens_hit)
+                # Exigir que el nombre o la marca del resultado coincida de verdad con el OCR
+                if sim_t < 72.0:
+                    continue
 
-        cat_default = categorias[0] if categorias else {"id_categoria": 1, "nombre_categoria": "General"}
-        pref = cat_default["nombre_categoria"][:3].upper()
+                if marca_str and marca_str.lower() not in nom_hit.lower():
+                    nombre_completo = f"{nom_hit} ({marca_str})".strip()
+                else:
+                    nombre_completo = nom_hit or marca_str
 
-        return {
-            "es_existente": False,
-            "id_producto": None,
-            "codigo_sku": f"{pref}-{len(inventario) + 15:03d}",
-            "nombre_detectado": nombre_completo,
-            "nombre_categoria": cat_default["nombre_categoria"],
-            "id_categoria": cat_default["id_categoria"],
-            "stock_actual": 0,
-            "formato_sugerido": "CAJA",
-            "unidades_por_formato_sugeridas": 12,
-            "peso_sugerido": 1.0,
-            "unidad_peso_sugerida": "kg",
-            "precio_compra_sugerido": 1000.0,
-            "precio_venta_sugerido": 1590.0,
-            "perecible_sugerido": True,
-            "confianza_pct": 85,
-            "descripcion_visual": (
-                f"Relación Cruzada Imagen + Texto en Open Food Facts: "
-                f"Texto leído «{' · '.join(textos_ocr[:4])}»"
-            ),
-            "motor_vision": "🌐 Base Pública Open Food Facts + OCR",
-            "recordado_de_memoria": False,
-            "es_incoherente": False,
-        }
+                cat_default = categorias[0] if categorias else {"id_categoria": 1, "nombre_categoria": "General"}
+                pref = cat_default["nombre_categoria"][:3].upper()
+                return {
+                    "es_existente": False,
+                    "id_producto": None,
+                    "codigo_sku": f"{pref}-{len(inventario) + 15:03d}",
+                    "nombre_detectado": nombre_completo,
+                    "nombre_categoria": cat_default["nombre_categoria"],
+                    "id_categoria": cat_default["id_categoria"],
+                    "stock_actual": 0,
+                    "formato_sugerido": "CAJA",
+                    "unidades_por_formato_sugeridas": 12,
+                    "peso_sugerido": 1.0,
+                    "unidad_peso_sugerida": "kg",
+                    "precio_compra_sugerido": 1000.0,
+                    "precio_venta_sugerido": 1590.0,
+                    "perecible_sugerido": True,
+                    "confianza_pct": int(round(sim_t)),
+                    "descripcion_visual": (
+                        f"Verificado en Open Food Facts: Texto leído «{' · '.join(textos_ocr[:4])}» "
+                        f"coincide con «{nombre_completo}»"
+                    ),
+                    "motor_vision": "🌐 Base Pública Open Food Facts + OCR",
+                    "recordado_de_memoria": False,
+                    "es_incoherente": False,
+                }
     except Exception:
-        return None
+        pass
+    return None
 
 
 # ============================================================================
@@ -1423,7 +1047,7 @@ def _construir_respuesta_cruzada(
         motor_lbl = (
             "🧠 Memoria Visual + Texto OCR"
             if es_aprendida_op
-            else "🇨🇱 Base Open Food Facts Chile (Imagen + OCR)"
+            else "🇨🇱 Base Pública Mercado Chileno (Imagen + OCR)"
         )
     elif es_incoherente:
         desc = (
@@ -1439,10 +1063,10 @@ def _construir_respuesta_cruzada(
         motor_lbl = "🧠 Memoria Visual Aprendida (Operario)"
     else:
         desc = (
-            f"Coincidencia visual con fotografía real de Open Food Facts Chile "
+            f"Coincidencia visual con fotografía real de base pública chilena "
             f"({sim_img:.1f}% similitud de empaque)"
         )
-        motor_lbl = "🇨🇱 Base Open Food Facts Chile"
+        motor_lbl = "🇨🇱 Base Pública Mercado Chileno"
 
     if prod_inv is not None:
         return {
@@ -1503,16 +1127,15 @@ def detectar_producto_en_imagen(
     api_key_gemini: str = "",
 ) -> dict[str, Any]:
     """
-    Detecta el producto en la fotografía capturada por cámara aplicando
-    Relación Cruzada entre la Imagen (sin fondo negro) y el Texto OCR leído en el envase:
-      1. Extrae la huella visual del objeto recortado y lee el texto impreso con RapidOCR.
-      2. Evalúa todos los candidatos (Memoria del Operario + 33 Fotos Reales de Open Food Facts
-         + Inventario Activo) cruzando simultáneamente `sim_imagen` y `sim_texto`.
-      3. Si la cámara leyó texto en el envase (ej. "Coca-Cola Sin Calorías 1.5L"), veta
-         automáticamente cualquier referencia cuyo texto no coincida (ej. "Galletas Kuky"),
-         eligiendo el producto donde Imagen y Texto coinciden.
-      4. Si el texto leído corresponde a una marca nueva no precargada, consulta en vivo
-         la API pública de Open Food Facts.
+    Detecta el producto en la imagen capturada por cámara cruzando Imagen + Texto OCR:
+      1. Extrae la huella visual sin fondo y reconstruye palabras partidas por envases curvos
+         (ej. 'POWER' + 'YYADE' -> 'POWERADE').
+      2. Cruza `sim_imagen` y `sim_texto` contra la Memoria del Operario y la Base Masiva
+         de 106 Productos del Mercado Chileno (con fotografías reales de Open Food Facts
+         y Wikimedia Commons).
+      3. Si el texto leído corresponde a un producto externo, valida estrictamente contra
+         Open Food Facts o usa directamente el texto leído del envase (sin inventar
+         productos no relacionados).
     """
     inventario = obtener_inventario_consolidado()
     catalogos = obtener_catalogos()
@@ -1523,12 +1146,11 @@ def detectar_producto_en_imagen(
 
     huella_captura = extraer_huella_visual(imagen_bytes, incluir_ocr=calidad_ok)
     textos_ocr = huella_captura.get("textos_ocr", [])
-    tokens_ocr = _tokenizar_ocr(textos_ocr)
+    tokens_ocr = _tokenizar_ocr(textos_ocr, reconstruir_pares=True)
     hay_texto = len(tokens_ocr) > 0
 
     referencias_memoria = cargar_memoria_visual()
 
-    # Evaluar todos los candidatos con la Relación Cruzada Imagen + Texto
     mejor_ref = None
     mejor_eval = {
         "score_cruzado": -1.0,
@@ -1542,8 +1164,6 @@ def detectar_producto_en_imagen(
         ev = calcular_relacion_cruzada_imagen_texto(
             huella_captura, ref, hay_texto_en_captura=hay_texto
         )
-        # Pequeña preferencia de desempate (+1.5 pts) a referencias enseñadas por el operario
-        # SOLO cuando no están vetadas por texto distinto
         score_comp = ev["score_cruzado"]
         if (
             ref.get("origen") != "BASE_CHILENA_PRECARGADA"
@@ -1555,16 +1175,14 @@ def detectar_producto_en_imagen(
             mejor_eval = {**ev, "score_cruzado": min(99.5, round(score_comp, 1))}
             mejor_ref = ref
 
-    # Si la cámara leyó texto claro en el envase, pero ningún candidato local coincidió en texto,
-    # consultar la base pública Open Food Facts en vivo con el texto leído
-    if hay_texto and mejor_eval["sim_texto"] < 45.0:
+    if hay_texto and mejor_eval["sim_texto"] < 55.0:
         det_off_vivo = _consultar_openfoodfacts_en_vivo(
             textos_ocr, huella_captura, inventario, categorias
         )
         if det_off_vivo is not None:
             return det_off_vivo
 
-        # Si está sin internet pero leyó palabras claras en el envase, proponer el texto leído
+        # Construir propuesta directamente con las palabras reales leídas en el envase
         nombre_leido = " ".join(textos_ocr[:3]).title()
         cat_def = categorias[0] if categorias else {"id_categoria": 1, "nombre_categoria": "General"}
         pref = cat_def["nombre_categoria"][:3].upper()
@@ -1572,9 +1190,9 @@ def detectar_producto_en_imagen(
             "es_existente": False,
             "id_producto": None,
             "codigo_sku": f"{pref}-{len(inventario) + 14:03d}",
-            "nombre_detectado": nombre_leido,
             "nombre_categoria": cat_def["nombre_categoria"],
             "id_categoria": cat_def["id_categoria"],
+            "nombre_detectado": nombre_leido,
             "stock_actual": 0,
             "formato_sugerido": "CAJA",
             "unidades_por_formato_sugeridas": 12,
@@ -1583,7 +1201,7 @@ def detectar_producto_en_imagen(
             "precio_compra_sugerido": 950.0,
             "precio_venta_sugerido": 1490.0,
             "perecible_sugerido": True,
-            "confianza_pct": 80,
+            "confianza_pct": 82,
             "descripcion_visual": f"Texto leído directamente del envase: «{' · '.join(textos_ocr[:4])}»",
             "motor_vision": "IA Lectora de Empaque (Imagen + OCR)",
             "recordado_de_memoria": False,
