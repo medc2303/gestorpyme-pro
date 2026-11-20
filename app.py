@@ -12,10 +12,12 @@ Incluye:
 from __future__ import annotations
 
 from datetime import date, timedelta
+import hashlib
 from typing import Any
 import streamlit as st
 
 from core.ai_assistant import generar_respuesta_asistente
+from core.vision_scanner import detectar_producto_en_imagen
 from core.store import (
     ErrorNegocio,
     aplicar_oferta_producto,
@@ -43,6 +45,7 @@ from core.ui_components import (
     esc,
     inyectar_estilos,
     moneda,
+    render_banner_producto_confirmado,
     render_card_header,
     render_conversion_preview,
     render_grafico_ventas_svg,
@@ -54,6 +57,7 @@ from core.ui_components import (
     render_tabla_perdidas,
     render_tabla_promedios_categoria,
     render_tabla_reabastecimiento,
+    render_tarjeta_deteccion_ia,
     render_topbar,
 )
 
@@ -79,6 +83,22 @@ if "carrito" not in st.session_state:
 
 if "ultimo_comprobante" not in st.session_state:
     st.session_state["ultimo_comprobante"] = None
+
+if "camara_activa" not in st.session_state:
+    st.session_state["camara_activa"] = False
+
+if "scanner_estado" not in st.session_state:
+    st.session_state["scanner_estado"] = "SIN_CAPTURA"
+    # Estados: SIN_CAPTURA -> ESPERANDO_CONFIRMACION -> CORRIGIENDO_PRODUCTO -> CONFIRMADO_INGRESAR_CANTIDAD
+
+if "scanner_deteccion" not in st.session_state:
+    st.session_state["scanner_deteccion"] = None
+
+if "scanner_last_img_hash" not in st.session_state:
+    st.session_state["scanner_last_img_hash"] = None
+
+if "scanner_mensaje_exito" not in st.session_state:
+    st.session_state["scanner_mensaje_exito"] = None
 
 if "mensajes_ia" not in st.session_state:
     st.session_state["mensajes_ia"] = [
@@ -572,6 +592,446 @@ def render_modulo_caja(usuario: dict[str, Any], prefijo_key: str = "pos") -> Non
 
 
 # ============================================================================
+# MÓDULO DE ESCANEO DE PRODUCTOS CON CÁMARA E IA (CONFIRMACIÓN DEL OPERARIO)
+# ============================================================================
+
+
+def render_bloque_escaner_camara(
+    usuario: dict[str, Any],
+    mapa_cat_form: dict[int, str],
+    mapa_prov_form: dict[int, str],
+) -> None:
+    """
+    Gestiona el flujo completo de escaneo por cámara:
+      1. Botón para activar/desactivar la cámara.
+      2. Captura de foto y detección automática del objeto con IA de Visión.
+      3. Pregunta al operario para confirmar si el objeto en pantalla es el que cree la IA
+         (o corregirlo si corresponde a otro).
+      4. Una vez confirmado, ingreso de cantidad en Lote, Caja o Unidades con conversión automática.
+    """
+    if st.session_state.get("scanner_mensaje_exito"):
+        st.success(st.session_state["scanner_mensaje_exito"])
+
+    if not st.session_state.get("camara_activa", False):
+        with st.container(border=True):
+            c_txt, c_btn = st.columns([1.85, 1.15])
+            with c_txt:
+                st.markdown(
+                    "**📷 Escáner Inteligente con Cámara e IA**  \n"
+                    "<span style='font-size:0.82rem;color:#475569;'>"
+                    "Activa la cámara para que la IA reconozca el producto, confirma en pantalla "
+                    "y luego ingresa la cantidad en Lote, Caja o Unidades."
+                    "</span>",
+                    unsafe_allow_html=True,
+                )
+            with c_btn:
+                if st.button(
+                    "📷 Activar Cámara con IA",
+                    type="primary",
+                    width="stretch",
+                    key="btn_activar_camara_ia",
+                ):
+                    st.session_state["camara_activa"] = True
+                    st.session_state["scanner_mensaje_exito"] = None
+                    st.rerun()
+        return
+
+    # --- PANEL CON CÁMARA ACTIVA ---
+    with st.container(border=True):
+        h_izq, h_der = st.columns([2.2, 0.9])
+        with h_izq:
+            render_card_header(
+                "📷 Escaneo de Objeto con Cámara e IA",
+                "Paso 1: Toma la foto del producto -> Paso 2: Confirma detección IA -> Paso 3: Ingresa Lote, Caja o Unidades",
+                "Visión IA Activa",
+                "module-pill-purple",
+            )
+        with h_der:
+            if st.button(
+                "✖️ Cerrar Cámara",
+                width="stretch",
+                key="btn_cerrar_camara_ia",
+            ):
+                st.session_state["camara_activa"] = False
+                st.session_state["scanner_estado"] = "SIN_CAPTURA"
+                st.session_state["scanner_deteccion"] = None
+                st.session_state["scanner_last_img_hash"] = None
+                st.rerun()
+
+        foto_camara = st.camera_input(
+            "Apunta la cámara al producto y presiona 'Take Photo' para que la IA detecte el objeto",
+            key="widget_camara_ia",
+        )
+
+        with st.expander("📁 ¿Usando un PC sin cámara web? Subir foto del producto para probar la IA"):
+            foto_archivo = st.file_uploader(
+                "Selecciona una fotografía del producto (JPG/PNG)",
+                type=["jpg", "jpeg", "png", "webp"],
+                key="widget_archivo_ia",
+            )
+
+        archivo_activo = foto_camara if foto_camara is not None else foto_archivo
+
+        if archivo_activo is not None:
+            bytes_img = archivo_activo.getvalue()
+            hash_actual = hashlib.md5(bytes_img).hexdigest()
+
+            if hash_actual != st.session_state.get("scanner_last_img_hash"):
+                with st.spinner("🤖 Analizando objeto en pantalla con IA de Visión..."):
+                    det = detectar_producto_en_imagen(
+                        bytes_img,
+                        api_key_gemini=st.session_state.get("cfg_apikey_ia", ""),
+                    )
+                st.session_state["scanner_deteccion"] = det
+                st.session_state["scanner_last_img_hash"] = hash_actual
+                st.session_state["scanner_estado"] = "ESPERANDO_CONFIRMACION"
+                st.session_state["scanner_mensaje_exito"] = None
+        else:
+            if st.session_state.get("scanner_estado") != "CONFIRMADO_INGRESAR_CANTIDAD":
+                st.session_state["scanner_estado"] = "SIN_CAPTURA"
+                st.session_state["scanner_deteccion"] = None
+                st.session_state["scanner_last_img_hash"] = None
+
+        det_actual = st.session_state.get("scanner_deteccion")
+        estado_scan = st.session_state.get("scanner_estado", "SIN_CAPTURA")
+
+        if not det_actual or estado_scan == "SIN_CAPTURA":
+            st.caption(
+                "👆 Captura una imagen con la cámara superior para que la IA identifique el producto."
+            )
+            return
+
+        # ====================================================================
+        # PASO 2: PREGUNTAR AL OPERARIO SI EL OBJETO EN PANTALLA ES EL CORRECTO
+        # ====================================================================
+        if estado_scan == "ESPERANDO_CONFIRMACION":
+            render_tarjeta_deteccion_ia(det_actual)
+
+            b_si, b_no = st.columns([1.3, 1.1])
+            with b_si:
+                if st.button(
+                    f"✅ Sí, confirmar que es «{det_actual['nombre_detectado']}»",
+                    type="primary",
+                    width="stretch",
+                    key="btn_operario_confirma_si",
+                ):
+                    st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
+                    st.rerun()
+            with b_no:
+                if st.button(
+                    "🔄 No es este, elegir / corregir producto",
+                    width="stretch",
+                    key="btn_operario_confirma_no",
+                ):
+                    st.session_state["scanner_estado"] = "CORRIGIENDO_PRODUCTO"
+                    st.rerun()
+
+        # ====================================================================
+        # PASO 2B: CORRECCIÓN MANUAL SI LA IA NO ACERTÓ EL PRODUCTO
+        # ====================================================================
+        elif estado_scan == "CORRIGIENDO_PRODUCTO":
+            st.warning(
+                "🔧 **Corrección del Operario:** Indica cuál es realmente el producto que tienes frente a la cámara."
+            )
+            tipo_corr = st.radio(
+                "¿El objeto corresponde a un producto del catálogo o a uno nuevo?",
+                options=["EXISTENTE", "NUEVO"],
+                format_func=lambda t: (
+                    "📦 Es un producto que ya existe en el inventario"
+                    if t == "EXISTENTE"
+                    else "➕ Es un producto nuevo que no está en el catálogo"
+                ),
+                horizontal=True,
+                key="scan_corr_tipo",
+            )
+
+            inv_disp = obtener_inventario_consolidado()
+            if tipo_corr == "EXISTENTE" and inv_disp:
+                mapa_corr = {
+                    p["id_producto"]: f"{p['codigo_sku']} — {p['nombre_producto']} (Stock: {p['stock_actual']} uds)"
+                    for p in inv_disp
+                }
+                id_elegido = st.selectbox(
+                    "Selecciona el producto correcto *",
+                    options=list(mapa_corr.keys()),
+                    format_func=lambda k: mapa_corr[k],
+                    key="scan_corr_prod_id",
+                )
+                prod_elegido = next(p for p in inv_disp if p["id_producto"] == id_elegido)
+
+                c_ok, c_back = st.columns(2)
+                with c_ok:
+                    if st.button(
+                        "✅ Confirmar este producto y pasar a cantidad",
+                        type="primary",
+                        width="stretch",
+                        key="btn_guardar_corr_exist",
+                    ):
+                        st.session_state["scanner_deteccion"] = {
+                            "es_existente": True,
+                            "id_producto": prod_elegido["id_producto"],
+                            "codigo_sku": prod_elegido["codigo_sku"],
+                            "nombre_detectado": prod_elegido["nombre_producto"],
+                            "nombre_categoria": prod_elegido["nombre_categoria"],
+                            "id_categoria": prod_elegido["id_categoria"],
+                            "stock_actual": prod_elegido["stock_actual"],
+                            "formato_sugerido": prod_elegido["formato_habitual"],
+                            "unidades_por_formato_sugeridas": prod_elegido["unidades_por_formato"],
+                            "peso_sugerido": prod_elegido["peso_unitario"],
+                            "unidad_peso_sugerida": prod_elegido["unidad_peso"],
+                            "precio_compra_sugerido": prod_elegido["precio_compra"],
+                            "precio_venta_sugerido": prod_elegido["precio_venta"],
+                            "perecible_sugerido": prod_elegido["perecible"],
+                            "confianza_pct": 100,
+                            "descripcion_visual": "Seleccionado y confirmado por el operario",
+                            "motor_vision": "Confirmación Manual Operario",
+                        }
+                        st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
+                        st.rerun()
+                with c_back:
+                    if st.button("↩️ Volver", width="stretch", key="btn_volver_corr_1"):
+                        st.session_state["scanner_estado"] = "ESPERANDO_CONFIRMACION"
+                        st.rerun()
+            else:
+                cn1, cn2 = st.columns(2)
+                with cn1:
+                    corr_nombre = st.text_input(
+                        "Nombre real del producto *",
+                        value=det_actual.get("nombre_detectado", ""),
+                        key="scan_corr_nuevo_nom",
+                    )
+                with cn2:
+                    corr_cat = st.selectbox(
+                        "Categoría *",
+                        options=list(mapa_cat_form.keys()),
+                        format_func=lambda k: mapa_cat_form[k],
+                        key="scan_corr_nuevo_cat",
+                    )
+                c_ok2, c_back2 = st.columns(2)
+                with c_ok2:
+                    if st.button(
+                        "✅ Confirmar nuevo producto y pasar a cantidad",
+                        type="primary",
+                        width="stretch",
+                        key="btn_guardar_corr_nuevo",
+                    ):
+                        pref = mapa_cat_form[corr_cat][:3].upper()
+                        det_actual["es_existente"] = False
+                        det_actual["id_producto"] = None
+                        det_actual["codigo_sku"] = f"{pref}-{len(inv_disp) + 15:03d}"
+                        det_actual["nombre_detectado"] = corr_nombre.strip() or "Producto Escaneado"
+                        det_actual["id_categoria"] = int(corr_cat)
+                        det_actual["nombre_categoria"] = mapa_cat_form[corr_cat]
+                        st.session_state["scanner_deteccion"] = det_actual
+                        st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
+                        st.rerun()
+                with c_back2:
+                    if st.button("↩️ Volver", width="stretch", key="btn_volver_corr_2"):
+                        st.session_state["scanner_estado"] = "ESPERANDO_CONFIRMACION"
+                        st.rerun()
+
+        # ====================================================================
+        # PASO 3: PRODUCTO CONFIRMADO -> INGRESAR CANTIDAD (LOTE, CAJA O UNIDADES)
+        # ====================================================================
+        elif estado_scan == "CONFIRMADO_INGRESAR_CANTIDAD":
+            render_banner_producto_confirmado(det_actual)
+
+            st.markdown("###### 📦 Indica cuánto del producto confirmado vas a ingresar (Lote, Caja o Unidades)")
+            fmt_def = det_actual.get("formato_sugerido", "CAJA")
+            idx_f = (
+                ["CAJA", "LOTE", "UNIDAD"].index(fmt_def)
+                if fmt_def in ("CAJA", "LOTE", "UNIDAD")
+                else 0
+            )
+
+            sc1, sc2, sc3 = st.columns(3)
+            with sc1:
+                scan_formato = st.selectbox(
+                    "Formato de Ingreso *",
+                    options=["CAJA", "LOTE", "UNIDAD"],
+                    index=idx_f,
+                    format_func=lambda f: {
+                        "CAJA": "📦 Caja",
+                        "LOTE": "🧱 Lote / Pack",
+                        "UNIDAD": "🔹 Unidades",
+                    }[f],
+                    key="scan_ing_formato",
+                )
+            with sc2:
+                etiq_c = (
+                    "Cantidad de Cajas *"
+                    if scan_formato == "CAJA"
+                    else (
+                        "Cantidad de Lotes *"
+                        if scan_formato == "LOTE"
+                        else "Cantidad de Unidades *"
+                    )
+                )
+                scan_cant = st.number_input(
+                    etiq_c,
+                    min_value=1,
+                    max_value=5000,
+                    value=2 if scan_formato != "UNIDAD" else 12,
+                    step=1,
+                    key="scan_ing_cant",
+                )
+            with sc3:
+                if scan_formato == "UNIDAD":
+                    scan_upf = 1
+                    st.text_input(
+                        "Unidades por formato",
+                        value="1 unidad (directo)",
+                        disabled=True,
+                        key="scan_upf_dis",
+                    )
+                else:
+                    upf_sug = max(2, int(det_actual.get("unidades_por_formato_sugeridas", 12) or 12))
+                    scan_upf = st.number_input(
+                        f"Unidades por {scan_formato.title()} *",
+                        min_value=2,
+                        max_value=1000,
+                        value=upf_sug,
+                        step=1,
+                        key="scan_ing_upf",
+                    )
+
+            sd1, sd2 = st.columns(2)
+            with sd1:
+                scan_perecible = st.checkbox(
+                    "Tiene fecha de caducidad (perecible)",
+                    value=bool(det_actual.get("perecible_sugerido", True)),
+                    key="scan_ing_perecible",
+                )
+            with sd2:
+                if scan_perecible:
+                    scan_fecha_cad = st.date_input(
+                        "Fecha de Caducidad del Lote *",
+                        value=date.today() + timedelta(days=25),
+                        key="scan_ing_cad",
+                    )
+                else:
+                    scan_fecha_cad = None
+
+            if not det_actual.get("es_existente", True):
+                st.markdown("###### 🏷️ Datos del Nuevo Producto Detectado")
+                sn1, sn2, sn3, sn4 = st.columns(4)
+                with sn1:
+                    scan_sku_nuevo = st.text_input(
+                        "SKU *",
+                        value=det_actual.get("codigo_sku", "PRD-020"),
+                        key="scan_nuevo_sku",
+                    )
+                with sn2:
+                    scan_peso_nuevo = st.number_input(
+                        "Peso Unit. *",
+                        min_value=0.01,
+                        value=float(det_actual.get("peso_sugerido", 1.0)),
+                        step=0.1,
+                        key="scan_nuevo_peso",
+                    )
+                with sn3:
+                    scan_costo_nuevo = st.number_input(
+                        "Costo Unit. ($) *",
+                        min_value=0.0,
+                        value=float(det_actual.get("precio_compra_sugerido", 850.0)),
+                        step=50.0,
+                        key="scan_nuevo_costo",
+                    )
+                with sn4:
+                    scan_venta_nuevo = st.number_input(
+                        "Precio Venta ($) *",
+                        min_value=1.0,
+                        value=float(det_actual.get("precio_venta_sugerido", 1350.0)),
+                        step=50.0,
+                        key="scan_nuevo_venta",
+                    )
+                peso_preview = float(scan_peso_nuevo)
+                costo_preview = float(scan_costo_nuevo)
+            else:
+                peso_preview = float(det_actual.get("peso_sugerido", 1.0))
+                costo_preview = float(det_actual.get("precio_compra_sugerido", 850.0))
+
+            render_conversion_preview(
+                formato=scan_formato,
+                cantidad_formato=int(scan_cant),
+                unidades_por_formato=int(scan_upf),
+                peso_unitario=peso_preview,
+                unidad_peso=det_actual.get("unidad_peso_sugerida", "kg"),
+                costo_unitario=costo_preview,
+            )
+
+            b_ing, b_cambiar = st.columns([1.8, 1])
+            with b_ing:
+                if st.button(
+                    "📥 Confirmar e Ingresar al Inventario",
+                    type="primary",
+                    width="stretch",
+                    key="btn_ejecutar_ingreso_scanner",
+                ):
+                    try:
+                        fecha_cad_str = (
+                            scan_fecha_cad.strftime("%Y-%m-%d")
+                            if (scan_perecible and scan_fecha_cad)
+                            else None
+                        )
+                        if det_actual.get("es_existente", True):
+                            res = reabastecer_producto(
+                                id_producto=int(det_actual["id_producto"]),
+                                formato_ingreso=scan_formato,
+                                cantidad_formato=int(scan_cant),
+                                unidades_por_formato=int(scan_upf),
+                                modo_costo="POR_UNIDAD",
+                                costo_ingresado=costo_preview,
+                                fecha_caducidad=fecha_cad_str,
+                                usuario=usuario,
+                            )
+                            st.session_state["scanner_mensaje_exito"] = (
+                                f"✅ **Escaneo IA ingresado:** Se sumaron **+{res['unidades_ingresadas']} unidades** "
+                                f"({scan_cant} {scan_formato} × {scan_upf}u) a **{res['nombre_producto']}**. "
+                                f"Stock actualizado: **{res['stock_posterior']} uds**."
+                            )
+                        else:
+                            creado = registrar_producto(
+                                codigo_sku=scan_sku_nuevo,
+                                nombre_producto=det_actual["nombre_detectado"],
+                                id_categoria=int(det_actual["id_categoria"]),
+                                id_proveedor=None,
+                                formato_ingreso=scan_formato,
+                                cantidad_formato=int(scan_cant),
+                                unidades_por_formato=int(scan_upf),
+                                modo_costo="POR_UNIDAD",
+                                costo_ingresado=float(scan_costo_nuevo),
+                                precio_venta_unitario=float(scan_venta_nuevo),
+                                stock_minimo_unidades=6,
+                                peso_unitario=float(scan_peso_nuevo),
+                                unidad_peso=det_actual.get("unidad_peso_sugerida", "kg"),
+                                perecible=bool(scan_perecible),
+                                fecha_caducidad=fecha_cad_str,
+                                usuario=usuario,
+                            )
+                            st.session_state["scanner_mensaje_exito"] = (
+                                f"✅ **Nuevo producto creado por Escáner IA:** **{creado['nombre_producto']}** "
+                                f"(`{creado['codigo_sku']}`) ingresado con **{creado['stock_actual']} unidades**."
+                            )
+
+                        st.session_state["scanner_estado"] = "SIN_CAPTURA"
+                        st.session_state["scanner_deteccion"] = None
+                        st.session_state["scanner_last_img_hash"] = None
+                        st.toast("Inventario actualizado desde el Escáner IA.", icon="📷")
+                        st.rerun()
+                    except ErrorNegocio as err:
+                        st.error(str(err))
+            with b_cambiar:
+                if st.button(
+                    "↩️ Cambiar producto detectado",
+                    width="stretch",
+                    key="btn_volver_a_confirmacion_scan",
+                ):
+                    st.session_state["scanner_estado"] = "ESPERANDO_CONFIRMACION"
+                    st.rerun()
+
+
+# ============================================================================
 # VISTA 2: PANEL INTEGRAL DEL DUEÑO / ADMINISTRADOR DE LA PYME
 # ============================================================================
 
@@ -1015,6 +1475,8 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
 
         # --- COLUMNA IZQUIERDA: INGRESO DE INVENTARIO CON CONVERSIÓN AUTOMÁTICA ---
         with col_ingreso_izq:
+            render_bloque_escaner_camara(usuario, mapa_cat_form, mapa_prov_form)
+
             with st.container(border=True):
                 modo_operacion = st.radio(
                     "Tipo de Operación de Entrada",

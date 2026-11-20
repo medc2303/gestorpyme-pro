@@ -52,3 +52,5 @@ streamlit run app.py
    - Registra el peso/contenido neto por unidad (`g`, `kg`, `ml`, `L`), calcula el peso total almacenado en bodega y descuenta en Caja primero los lotes que vencen antes (**FEFO**), bloqueando la venta accidental de lotes vencidos.
 4. **Asesor Comercial con IA Gratuita:**
    - Chatbot integrado que analiza en vivo ventas, márgenes, rotación de 30 días y caducidades para sugerir futuras compras, ofertas anti-merma y combos promocionales.
+5. **Escáner de Productos con Cámara y Visión por IA:**
+   - Permite activar la cámara en la pestaña de ingreso de inventario para que la IA detecte el objeto, consulte al operario si el producto identificado es el correcto (con opción de corrección rápida) y luego habilite el ingreso de cantidad en **Lote**, **Caja** o **Unidades** con conversión automática.

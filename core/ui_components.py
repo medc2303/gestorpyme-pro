@@ -797,3 +797,63 @@ def render_tabla_perdidas(datos_perd: dict[str, Any]) -> None:
         </div>
         """
     )
+
+
+def render_tarjeta_deteccion_ia(det: dict[str, Any]) -> None:
+    """Renderiza el resultado de detección por cámara y la pregunta de confirmación al operario."""
+    es_exist = det.get("es_existente", True)
+    etiqueta_tipo = (
+        f"Producto registrado en catálogo (Stock actual: {det.get('stock_actual', 0)} uds)"
+        if es_exist
+        else "Producto nuevo detectado (se registrará en el catálogo)"
+    )
+    conf = det.get("confianza_pct", 90)
+    motor = det.get("motor_vision", "IA de Visión")
+
+    st.html(
+        f"""
+        <div class="scanner-detection-card">
+            <div class="scanner-badge-top">
+                🤖 IA DETECTÓ OBJETO ({conf}% confianza &bull; {esc(motor)})
+            </div>
+            <div class="scanner-product-title">
+                <span class="mono">{esc(det.get("codigo_sku", ""))}</span> — {esc(det.get("nombre_detectado", ""))}
+            </div>
+            <div class="scanner-meta-row">
+                <strong>Estado:</strong> {esc(etiqueta_tipo)} &bull;
+                <strong>Categoría:</strong> {esc(det.get("nombre_categoria", ""))} &bull;
+                <strong>Observación IA:</strong> <em>{esc(det.get("descripcion_visual", ""))}</em>
+            </div>
+            <div class="scanner-operator-question">
+                ❓ Confirmación del Operario: ¿El producto capturado en pantalla es «{esc(det.get("nombre_detectado", ""))}»?
+            </div>
+        </div>
+        """
+    )
+
+
+def render_banner_producto_confirmado(det: dict[str, Any]) -> None:
+    """Renderiza el banner verde cuando el operario ya confirmó que el objeto detectado es el correcto."""
+    es_exist = det.get("es_existente", True)
+    sub = (
+        f"Abasteciendo producto existente en inventario (Stock actual: {det.get('stock_actual', 0)} uds)"
+        if es_exist
+        else "Registrando como nuevo producto en el catálogo"
+    )
+    st.html(
+        f"""
+        <div class="scanner-confirmed-banner">
+            <div>
+                <div class="scanner-confirmed-title">
+                    ✅ Producto Confirmado por Operario: <span class="mono">{esc(det.get("codigo_sku", ""))}</span> — {esc(det.get("nombre_detectado", ""))}
+                </div>
+                <div class="scanner-confirmed-sub">
+                    {esc(sub)} &bull; Categoría: {esc(det.get("nombre_categoria", ""))}
+                </div>
+            </div>
+            <span class="badge badge-optimo" style="font-size:0.82rem;padding:0.3rem 0.75rem;">
+                Paso Final: Ingresar Cantidad (Lote, Caja o Unidades)
+            </span>
+        </div>
+        """
+    )
