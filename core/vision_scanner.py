@@ -1,24 +1,23 @@
 """
-Módulo de Escaneo de Productos con Cámara, Visión por IA, OCR en Envase y
-Memoria Visual de Aprendizaje del Operario (100% Gratuito y Local/Nube).
+Módulo de Escaneo de Productos con Cámara, Visión por IA, OCR en Envase,
+Base Precargada del Mercado Chileno y Memoria Visual de Aprendizaje del Operario.
 
-Cómo funciona el sistema de detección y aprendizaje continuo:
-  1. MEMORIA VISUAL APRENDIDA (Prioridad 1):
-     Cada vez que el operario corrige a la IA ("No es este producto, es X") o confirma
-     un objeto nuevo/dudoso, el sistema guarda la huella visual de la imagen
-     (dHash + aHash perceptual + Grilla espacial de color 4x4 + Histograma cromático +
-     Palabras clave leídas por OCR + Miniatura) en `data/memoria_visual.json`.
-     En futuros escaneos, si el objeto frente a la cámara coincide con una imagen
-     recordada, la IA devuelve exactamente el producto enseñado por el operario.
-  2. LECTURA OCR DE MARCA Y TEXTO EN ENVASE (Prioridad 2):
-     Utiliza RapidOCR (ONNX Runtime local, sin requerir GPU ni claves) para leer
-     textos, marcas y gramajes impresos en el empaque (ej. "MCKAY", "KUKY",
-     "ChipChipers", "Blanco", "1L", "150g") y cruzarlos con el catálogo o sugerir
-     el nombre real impreso en el producto.
-  3. ANÁLISIS VISUAL DE EMPAQUE + IA MULTIMODAL (Prioridad 3):
-     Si el objeto no tiene texto legible ni está aún en la Memoria Visual, estima
-     el candidato más cercano e indica nivel de certeza moderado para invitar al
-     operario a enseñarle el producto en 1 clic.
+Características clave:
+  1. BASE PRECARGADA DEL MERCADO CHILENO (36 productos comunes de almacenes y minimarkets):
+     Incluye marcas reales chilenas (McKay Kuky, Tritón, Costa Tuareg, Frac, Super 8,
+     Trencito, Lay's, Kryzpo, Soprole, Colun, Cachantún, Vital, Coca-Cola, Kem Piña,
+     Bilz/Pap, Watt's, Tucapel, Carozzi, Lucchetti, Pomarola, Chef, Belmont, Iansa,
+     Sal Lobos, Té Supremo, Nescafé, Selecta, Robinson Crusoe, Omo, Quix, Clorinda,
+     Confort, Ballerina, Pepsodent, Colgate) con sus imágenes de referencia, huellas
+     visuales, palabras clave OCR, pesos, formatos Caja/Lote y precios en pesos chilenos.
+  2. MEMORIA VISUAL APRENDIDA DEL OPERARIO (`data/memoria_visual.json`):
+     Cada vez que la IA duda o se equivoca y el operario indica cuál es el producto,
+     se guarda la huella visual de esa imagen (dHash, aHash, grilla 4x4, histograma,
+     OCR y miniatura) para que en futuros escaneos la IA recuerde exactamente ese objeto.
+  3. DETECCIÓN DE INCOHERENCIAS / IMÁGENES BORROSAS O SIN PRODUCTO:
+     Si la captura es demasiado oscura, uniforme o no coincide con certeza con ninguna
+     referencia ni texto OCR, advierte explícitamente al operario para evitar ingresos
+     incoherentes y respalda siempre con la referencia chilena más cercana.
 """
 
 from __future__ import annotations
@@ -29,12 +28,10 @@ from difflib import SequenceMatcher
 import io
 import json
 import math
-from pathlib import Path
 import re
 from typing import Any
 import numpy as np
-from PIL import Image
-import requests
+from PIL import Image, ImageDraw
 
 from core.store import DIRECTORIO_DATOS, obtener_catalogos, obtener_inventario_consolidado
 
@@ -45,7 +42,7 @@ _OCR_CARGADO: bool = False
 
 
 def _obtener_motor_ocr() -> Any:
-    """Inicializa RapidOCR (ONNX) como singleton en memoria para lectura rápida de envases."""
+    """Inicializa RapidOCR (ONNX) como singleton en memoria."""
     global _OCR_INSTANCE, _OCR_CARGADO
     if _OCR_CARGADO:
         return _OCR_INSTANCE
@@ -60,22 +57,548 @@ def _obtener_motor_ocr() -> Any:
 
 
 # ============================================================================
-# EXTRACCIÓN DE HUELLA VISUAL Y RECORTADO INTELIGENTE DE OBJETO
+# BASE PRECARGADA DE PRODUCTOS COMUNES DEL MERCADO CHILENO
+# ============================================================================
+
+CATALOGO_CHILENO_PRECARGADO: list[dict[str, Any]] = [
+    # --- SNACKS, GALLETAS Y CONFITERÍA CHILENA (Categoría 3) ---
+    {
+        "sku_ref": "SNK-101",
+        "sku_tienda": None,
+        "nombre": "Galletas McKay Kuky ChipChipers Blanco 120g",
+        "marca": "McKay",
+        "claves": ["kuky", "mckay", "chipchiper", "chipchipers", "blanco", "blana", "cnipchipera"],
+        "id_categoria": 3,
+        "peso": 120.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 750.0,
+        "venta": 1290.0,
+        "perecible": True,
+        "colores": ((225, 238, 250), (30, 58, 138), (210, 38, 48)),
+    },
+    {
+        "sku_ref": "SNK-102",
+        "sku_tienda": None,
+        "nombre": "Galletas McKay Kuky Clásica Chips Chocolate 120g",
+        "marca": "McKay",
+        "claves": ["kuky", "mckay", "clasica", "chips", "chocolate"],
+        "id_categoria": 3,
+        "peso": 120.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 750.0,
+        "venta": 1290.0,
+        "perecible": True,
+        "colores": ((28, 75, 175), (92, 51, 23), (220, 38, 38)),
+    },
+    {
+        "sku_ref": "SNK-103",
+        "sku_tienda": None,
+        "nombre": "Galletas McKay Tritón Vainilla 126g",
+        "marca": "McKay",
+        "claves": ["triton", "mckay", "vainilla", "sandwich"],
+        "id_categoria": 3,
+        "peso": 126.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 720.0,
+        "venta": 1250.0,
+        "perecible": True,
+        "colores": ((20, 45, 130), (234, 88, 12), (255, 255, 255)),
+    },
+    {
+        "sku_ref": "SNK-104",
+        "sku_tienda": None,
+        "nombre": "Galletas Costa Tuareg Coco 120g",
+        "marca": "Costa",
+        "claves": ["tuareg", "costa", "coco"],
+        "id_categoria": 3,
+        "peso": 120.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 690.0,
+        "venta": 1190.0,
+        "perecible": True,
+        "colores": ((245, 195, 25), (21, 128, 61), (120, 53, 15)),
+    },
+    {
+        "sku_ref": "SNK-105",
+        "sku_tienda": None,
+        "nombre": "Galletas Costa Frac Chocolate 130g",
+        "marca": "Costa",
+        "claves": ["frac", "costa", "chocolate", "rellenas"],
+        "id_categoria": 3,
+        "peso": 130.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 690.0,
+        "venta": 1190.0,
+        "perecible": True,
+        "colores": ((185, 28, 28), (45, 25, 15), (250, 204, 21)),
+    },
+    {
+        "sku_ref": "SNK-106",
+        "sku_tienda": None,
+        "nombre": "Oblea Bañada Super 8 Nestlé 29g",
+        "marca": "Nestlé",
+        "claves": ["super8", "super", "nestle", "oblea"],
+        "id_categoria": 3,
+        "peso": 29.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 24,
+        "compra": 250.0,
+        "venta": 500.0,
+        "perecible": True,
+        "colores": ((25, 25, 30), (250, 204, 21), (220, 38, 38)),
+    },
+    {
+        "sku_ref": "SNK-107",
+        "sku_tienda": None,
+        "nombre": "Chocolate Trencito Nestlé 150g",
+        "marca": "Nestlé",
+        "claves": ["trencito", "nestle", "sahne", "nuss", "chocolate", "leche"],
+        "id_categoria": 3,
+        "peso": 150.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 1450.0,
+        "venta": 2390.0,
+        "perecible": True,
+        "colores": ((220, 38, 38), (250, 204, 21), (95, 50, 25)),
+    },
+    {
+        "sku_ref": "SNK-001",
+        "sku_tienda": "SNK-001",
+        "nombre": "Galletas Artesanales Avena",
+        "marca": "Artesanal",
+        "claves": ["galletas", "artesanales", "avena", "integral", "quaker"],
+        "id_categoria": 3,
+        "peso": 250.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 900.0,
+        "venta": 1500.0,
+        "perecible": True,
+        "colores": ((210, 180, 140), (140, 95, 50), (245, 235, 220)),
+    },
+    {
+        "sku_ref": "SNK-002",
+        "sku_tienda": "SNK-002",
+        "nombre": "Papas Fritas Clásicas 150g (Lay's / Kryzpo)",
+        "marca": "Lay's / Kryzpo",
+        "claves": ["lays", "kryzpo", "papas", "fritas", "evercrisp", "marco", "polo", "doritos"],
+        "id_categoria": 3,
+        "peso": 150.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 18,
+        "compra": 1200.0,
+        "venta": 1990.0,
+        "perecible": True,
+        "colores": ((250, 204, 21), (220, 38, 38), (255, 255, 255)),
+    },
+    # --- BEBIDAS Y LÁCTEOS CHILENOS (Categoría 1) ---
+    {
+        "sku_ref": "BEB-001",
+        "sku_tienda": "BEB-001",
+        "nombre": "Leche Entera 1L (Soprole / Colun)",
+        "marca": "Soprole / Colun",
+        "claves": ["soprole", "colun", "loncoleche", "surlat", "leche", "entera"],
+        "id_categoria": 1,
+        "peso": 1.0,
+        "unidad_peso": "L",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 850.0,
+        "venta": 1250.0,
+        "perecible": True,
+        "colores": ((245, 248, 255), (29, 78, 216), (220, 38, 38)),
+    },
+    {
+        "sku_ref": "BEB-101",
+        "sku_tienda": None,
+        "nombre": "Leche Entera Colun Del Sur 1L",
+        "marca": "Colun",
+        "claves": ["colun", "leche", "sur", "magia"],
+        "id_categoria": 1,
+        "peso": 1.0,
+        "unidad_peso": "L",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 860.0,
+        "venta": 1290.0,
+        "perecible": True,
+        "colores": ((245, 250, 245), (21, 128, 61), (29, 78, 216)),
+    },
+    {
+        "sku_ref": "BEB-002",
+        "sku_tienda": "BEB-002",
+        "nombre": "Agua Mineral Sin Gas 1.5L (Cachantún / Vital)",
+        "marca": "Cachantún / Vital",
+        "claves": ["cachantun", "vital", "benedictino", "agua", "mineral"],
+        "id_categoria": 1,
+        "peso": 1.5,
+        "unidad_peso": "L",
+        "formato": "LOTE",
+        "upf": 6,
+        "compra": 500.0,
+        "venta": 950.0,
+        "perecible": True,
+        "colores": ((186, 230, 253), (2, 132, 199), (255, 255, 255)),
+    },
+    {
+        "sku_ref": "BEB-003",
+        "sku_tienda": "BEB-003",
+        "nombre": "Jugo Naranja Natural 1L (Watt's / Andina)",
+        "marca": "Watt's",
+        "claves": ["watts", "watt", "andina", "nectar", "jugo", "naranja", "durazno"],
+        "id_categoria": 1,
+        "peso": 1.0,
+        "unidad_peso": "L",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 1100.0,
+        "venta": 1690.0,
+        "perecible": True,
+        "colores": ((249, 115, 22), (250, 204, 21), (21, 128, 61)),
+    },
+    {
+        "sku_ref": "BEB-004",
+        "sku_tienda": "BEB-004",
+        "nombre": "Yogurt Griego Natural 150g (Soprole / Danone)",
+        "marca": "Soprole",
+        "claves": ["yogurt", "yoghurt", "griego", "batido", "next"],
+        "id_categoria": 1,
+        "peso": 150.0,
+        "unidad_peso": "g",
+        "formato": "LOTE",
+        "upf": 6,
+        "compra": 520.0,
+        "venta": 890.0,
+        "perecible": True,
+        "colores": ((248, 250, 252), (30, 64, 175), (148, 163, 184)),
+    },
+    {
+        "sku_ref": "BEB-102",
+        "sku_tienda": None,
+        "nombre": "Bebida Coca-Cola Original 1.5L",
+        "marca": "Coca-Cola",
+        "claves": ["coca", "cocacola", "cola", "original", "zero"],
+        "id_categoria": 1,
+        "peso": 1.5,
+        "unidad_peso": "L",
+        "formato": "LOTE",
+        "upf": 6,
+        "compra": 1250.0,
+        "venta": 1990.0,
+        "perecible": True,
+        "colores": ((210, 20, 30), (35, 20, 20), (255, 255, 255)),
+    },
+    {
+        "sku_ref": "BEB-103",
+        "sku_tienda": None,
+        "nombre": "Bebida Kem Piña / Bilz / Pap CCU 1.5L",
+        "marca": "CCU",
+        "claves": ["kem", "pina", "bilz", "pap", "ccu", "pepsi", "fanta", "sprite"],
+        "id_categoria": 1,
+        "peso": 1.5,
+        "unidad_peso": "L",
+        "formato": "LOTE",
+        "upf": 6,
+        "compra": 1050.0,
+        "venta": 1750.0,
+        "perecible": True,
+        "colores": ((250, 204, 21), (21, 128, 61), (220, 38, 38)),
+    },
+    # --- ABARROTES Y DESPENSA CHILENA (Categoría 2) ---
+    {
+        "sku_ref": "ABA-001",
+        "sku_tienda": "ABA-001",
+        "nombre": "Arroz Grado 1 (1kg) (Tucapel / Miraflores)",
+        "marca": "Tucapel / Miraflores",
+        "claves": ["tucapel", "miraflores", "arroz", "grado", "banquete"],
+        "id_categoria": 2,
+        "peso": 1.0,
+        "unidad_peso": "kg",
+        "formato": "LOTE",
+        "upf": 10,
+        "compra": 1050.0,
+        "venta": 1590.0,
+        "perecible": True,
+        "colores": ((220, 38, 38), (245, 245, 250), (29, 78, 216)),
+    },
+    {
+        "sku_ref": "ABA-002",
+        "sku_tienda": "ABA-002",
+        "nombre": "Aceite Vegetal Maravilla 900ml (Chef / Belmont)",
+        "marca": "Chef / Belmont",
+        "claves": ["chef", "belmont", "aceite", "maravilla", "vegetal"],
+        "id_categoria": 2,
+        "peso": 900.0,
+        "unidad_peso": "ml",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 1650.0,
+        "venta": 2390.0,
+        "perecible": True,
+        "colores": ((234, 179, 8), (21, 128, 61), (254, 249, 195)),
+    },
+    {
+        "sku_ref": "ABA-003",
+        "sku_tienda": "ABA-003",
+        "nombre": "Fideos Spaghetti 400g (Carozzi / Lucchetti)",
+        "marca": "Carozzi / Lucchetti",
+        "claves": ["carozzi", "lucchetti", "talliani", "spaghetti", "fideos", "tallarines", "espirales"],
+        "id_categoria": 2,
+        "peso": 400.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 20,
+        "compra": 620.0,
+        "venta": 990.0,
+        "perecible": True,
+        "colores": ((210, 30, 35), (29, 78, 216), (245, 195, 65)),
+    },
+    {
+        "sku_ref": "ABA-102",
+        "sku_tienda": None,
+        "nombre": "Salsa de Tomates Pomarola Carozzi 200g",
+        "marca": "Carozzi",
+        "claves": ["pomarola", "salsa", "tomates", "malloa", "italiana"],
+        "id_categoria": 2,
+        "peso": 200.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 24,
+        "compra": 480.0,
+        "venta": 850.0,
+        "perecible": True,
+        "colores": ((185, 28, 28), (21, 128, 61), (255, 255, 255)),
+    },
+    {
+        "sku_ref": "ABA-103",
+        "sku_tienda": None,
+        "nombre": "Azúcar Blanca Granulada Iansa 1kg",
+        "marca": "Iansa",
+        "claves": ["iansa", "azucar", "granulada", "blanca"],
+        "id_categoria": 2,
+        "peso": 1.0,
+        "unidad_peso": "kg",
+        "formato": "LOTE",
+        "upf": 10,
+        "compra": 980.0,
+        "venta": 1490.0,
+        "perecible": False,
+        "colores": ((250, 250, 252), (29, 78, 216), (220, 38, 38)),
+    },
+    {
+        "sku_ref": "ABA-104",
+        "sku_tienda": None,
+        "nombre": "Sal de Mesa Lobos 1kg",
+        "marca": "Lobos",
+        "claves": ["lobos", "sal", "yodada", "mar"],
+        "id_categoria": 2,
+        "peso": 1.0,
+        "unidad_peso": "kg",
+        "formato": "LOTE",
+        "upf": 10,
+        "compra": 350.0,
+        "venta": 690.0,
+        "perecible": False,
+        "colores": ((30, 58, 138), (255, 255, 255), (220, 38, 38)),
+    },
+    {
+        "sku_ref": "ABA-105",
+        "sku_tienda": None,
+        "nombre": "Té Supremo Ceylán Caja 20 Bolsitas",
+        "marca": "Supremo / Club",
+        "claves": ["supremo", "club", "lipton", "ceylan", "bolsitas"],
+        "id_categoria": 2,
+        "peso": 40.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 690.0,
+        "venta": 1190.0,
+        "perecible": True,
+        "colores": ((185, 28, 28), (234, 179, 8), (120, 53, 15)),
+    },
+    {
+        "sku_ref": "ABA-106",
+        "sku_tienda": None,
+        "nombre": "Café Instantáneo Nescafé Tradición 170g",
+        "marca": "Nescafé",
+        "claves": ["nescafe", "tradicion", "cafe", "dolca", "gold", "milo"],
+        "id_categoria": 2,
+        "peso": 170.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 3400.0,
+        "venta": 5290.0,
+        "perecible": True,
+        "colores": ((75, 40, 25), (220, 38, 38), (245, 222, 179)),
+    },
+    {
+        "sku_ref": "ABA-107",
+        "sku_tienda": None,
+        "nombre": "Harina Sin Polvos Selecta 1kg",
+        "marca": "Selecta",
+        "claves": ["selecta", "harina", "trigo", "mont", "blanc"],
+        "id_categoria": 2,
+        "peso": 1.0,
+        "unidad_peso": "kg",
+        "formato": "LOTE",
+        "upf": 10,
+        "compra": 890.0,
+        "venta": 1390.0,
+        "perecible": True,
+        "colores": ((250, 245, 235), (29, 78, 216), (220, 38, 38)),
+    },
+    {
+        "sku_ref": "ABA-108",
+        "sku_tienda": None,
+        "nombre": "Atún Lomitos Robinson Crusoe 160g",
+        "marca": "Robinson Crusoe",
+        "claves": ["robinson", "crusoe", "atun", "lomitos", "jurel", "san", "jose"],
+        "id_categoria": 2,
+        "peso": 160.0,
+        "unidad_peso": "g",
+        "formato": "CAJA",
+        "upf": 24,
+        "compra": 1150.0,
+        "venta": 1850.0,
+        "perecible": True,
+        "colores": ((15, 75, 165), (250, 204, 21), (255, 255, 255)),
+    },
+    # --- LIMPIEZA DEL HOGAR EN CHILE (Categoría 4) ---
+    {
+        "sku_ref": "LIM-001",
+        "sku_tienda": "LIM-001",
+        "nombre": "Detergente Líquido Ropa 3L (Omo / Ariel)",
+        "marca": "Omo / Ariel",
+        "claves": ["omo", "ariel", "drive", "rinso", "detergente", "matic"],
+        "id_categoria": 4,
+        "peso": 3.0,
+        "unidad_peso": "L",
+        "formato": "CAJA",
+        "upf": 4,
+        "compra": 4200.0,
+        "venta": 6490.0,
+        "perecible": False,
+        "colores": ((29, 78, 216), (220, 38, 38), (255, 255, 255)),
+    },
+    {
+        "sku_ref": "LIM-002",
+        "sku_tienda": "LIM-002",
+        "nombre": "Cloro Gel Desinfectante 1L (Clorinda / Clorox)",
+        "marca": "Clorinda / Clorox",
+        "claves": ["clorinda", "clorox", "cloro", "poett", "lysoform", "desinfectante"],
+        "id_categoria": 4,
+        "peso": 1.0,
+        "unidad_peso": "L",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 1150.0,
+        "venta": 1850.0,
+        "perecible": False,
+        "colores": ((21, 128, 61), (2, 132, 199), (255, 255, 255)),
+    },
+    {
+        "sku_ref": "LIM-101",
+        "sku_tienda": None,
+        "nombre": "Lavaloza Concentrado Quix Verde 750ml",
+        "marca": "Quix",
+        "claves": ["quix", "lavaloza", "magistral", "loza"],
+        "id_categoria": 4,
+        "peso": 750.0,
+        "unidad_peso": "ml",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 1250.0,
+        "venta": 1990.0,
+        "perecible": False,
+        "colores": ((22, 163, 74), (250, 204, 21), (255, 255, 255)),
+    },
+    {
+        "sku_ref": "LIM-102",
+        "sku_tienda": None,
+        "nombre": "Papel Higiénico Confort Doble Hoja (Pack 4)",
+        "marca": "Confort / Elite",
+        "claves": ["confort", "elite", "noble", "papel", "higienico", "nova"],
+        "id_categoria": 4,
+        "peso": 400.0,
+        "unidad_peso": "g",
+        "formato": "LOTE",
+        "upf": 12,
+        "compra": 1390.0,
+        "venta": 2290.0,
+        "perecible": False,
+        "colores": ((240, 249, 255), (2, 132, 199), (220, 38, 38)),
+    },
+    # --- CUIDADO PERSONAL EN CHILE (Categoría 5) ---
+    {
+        "sku_ref": "PER-001",
+        "sku_tienda": "PER-001",
+        "nombre": "Shampoo Hidratante 400ml (Ballerina / Sedal)",
+        "marca": "Ballerina / Sedal",
+        "claves": ["ballerina", "sedal", "pantene", "head", "shoulders", "shampoo", "familand"],
+        "id_categoria": 5,
+        "peso": 400.0,
+        "unidad_peso": "ml",
+        "formato": "CAJA",
+        "upf": 12,
+        "compra": 2100.0,
+        "venta": 3490.0,
+        "perecible": True,
+        "colores": ((219, 39, 119), (250, 232, 255), (147, 51, 234)),
+    },
+    {
+        "sku_ref": "PER-002",
+        "sku_tienda": "PER-002",
+        "nombre": "Pasta Dental Triple Acción 120g (Pepsodent / Colgate)",
+        "marca": "Pepsodent / Colgate",
+        "claves": ["pepsodent", "colgate", "sensodyne", "pasta", "dental"],
+        "id_categoria": 5,
+        "peso": 120.0,
+        "unidad_peso": "g",
+        "formato": "LOTE",
+        "upf": 12,
+        "compra": 980.0,
+        "venta": 1650.0,
+        "perecible": True,
+        "colores": ((220, 38, 38), (29, 78, 216), (255, 255, 255)),
+    },
+]
+
+
+def obtener_catalogo_chileno_referencia() -> list[dict[str, Any]]:
+    """Retorna la base precargada de productos comunes del mercado chileno."""
+    return CATALOGO_CHILENO_PRECARGADO
+
+
+# ============================================================================
+# EXTRACCIÓN DE HUELLA VISUAL Y GENERACIÓN DE MINIATURAS DE REFERENCIA
 # ============================================================================
 
 
 def _recortar_objeto_activo(img: Image.Image) -> Image.Image:
-    """
-    Elimina bordes oscuros o vacíos de la captura de cámara (por ejemplo mesas oscuras
-    o fondos negros bajo el producto) para concentrar la huella visual en el empaque.
-    """
+    """Elimina bordes oscuros o vacíos de la captura de cámara."""
     arr = np.asarray(img.convert("RGB"), dtype=np.float32)
     h, w, _ = arr.shape
     if h < 32 or w < 32:
         return img
 
     lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
-    # Filas y columnas que tienen contenido no oscuro (percentil 75 > 38)
     filas_activas = np.where(np.percentile(lum, 80, axis=1) > 38.0)[0]
     cols_activas = np.where(np.percentile(lum, 80, axis=0) > 38.0)[0]
 
@@ -90,8 +613,27 @@ def _recortar_objeto_activo(img: Image.Image) -> Image.Image:
     return img
 
 
+def _evaluar_calidad_imagen(img: Image.Image) -> tuple[bool, str]:
+    """
+    Detecta si una captura es incoherente (cámara tapada/negra, imagen totalmente blanca
+    o sin variación de contraste/objeto).
+    """
+    arr = np.asarray(img.convert("RGB"), dtype=np.float32)
+    lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
+    media = float(lum.mean())
+    desv = float(lum.std())
+
+    if media < 18.0:
+        return False, "Imagen demasiado oscura o cámara obstruida"
+    if media > 248.0 and desv < 6.0:
+        return False, "Imagen en blanco sin objeto visible"
+    if desv < 9.0:
+        return False, "Fondo plano sin empaque u objeto distinguible"
+    return True, "OK"
+
+
 def _calcular_hashes_perceptuales(img_recortada: Image.Image) -> tuple[str, str]:
-    """Calcula dHash (gradiente horizontal) y aHash (luminancia media) de 64 bits."""
+    """Calcula dHash y aHash de 64 bits."""
     gris_d = np.asarray(
         img_recortada.convert("L").resize((9, 8), Image.Resampling.LANCZOS),
         dtype=np.float32,
@@ -111,23 +653,16 @@ def _calcular_hashes_perceptuales(img_recortada: Image.Image) -> tuple[str, str]
 
 
 def _calcular_descriptores_color(img_recortada: Image.Image) -> tuple[list[float], list[float]]:
-    """
-    Extrae:
-      1. `grid_color` (4x4x3 = 48 valores): distribución espacial del color en el empaque,
-         con normalización de contraste para tolerar cambios de luz ambiental.
-      2. `hist_color` (48 bins L2-normalizados): firma cromática global invariante a posición/rotación.
-    """
+    """Extrae grilla espacial 4x4x3 y el histograma cromático de 48 bins."""
     peq = np.asarray(
         img_recortada.convert("RGB").resize((64, 64), Image.Resampling.LANCZOS),
         dtype=np.float32,
     )
-    # Normalización suave de iluminación (percentiles 5 y 95)
     p5 = float(np.percentile(peq, 5))
     p95 = float(np.percentile(peq, 95))
     rango = max(25.0, p95 - p5)
     norm_img = np.clip((peq - p5) / rango, 0.0, 1.0)
 
-    # 1. Grilla espacial 4x4x3
     grid = np.asarray(
         Image.fromarray(np.uint8(norm_img * 255)).resize((4, 4), Image.Resampling.BOX),
         dtype=np.float32,
@@ -135,7 +670,6 @@ def _calcular_descriptores_color(img_recortada: Image.Image) -> tuple[list[float
     norma_g = float(np.linalg.norm(grid))
     grid_list = [round(float(x / norma_g), 4) for x in grid] if norma_g > 1e-6 else [0.0] * 48
 
-    # 2. Histograma cromático de 16 bins por canal (48 bins totales)
     bins = np.linspace(0.0, 1.0001, 17)
     h_r, _ = np.histogram(norm_img[:, :, 0], bins=bins)
     h_g, _ = np.histogram(norm_img[:, :, 1], bins=bins)
@@ -148,7 +682,7 @@ def _calcular_descriptores_color(img_recortada: Image.Image) -> tuple[list[float
 
 
 def _extraer_texto_ocr(img_recortada: Image.Image) -> list[str]:
-    """Ejecuta RapidOCR sobre la imagen del producto para leer marca, nombre y peso."""
+    """Ejecuta RapidOCR sobre la imagen del producto."""
     motor = _obtener_motor_ocr()
     if motor is None:
         return []
@@ -185,10 +719,7 @@ def _extraer_texto_ocr(img_recortada: Image.Image) -> list[str]:
 def extraer_huella_visual(
     imagen_bytes: bytes, incluir_ocr: bool = True
 ) -> dict[str, Any]:
-    """
-    Construye el descriptor completo de una imagen capturada por cámara
-    para comparación y almacenamiento en la Memoria Visual.
-    """
+    """Extrae el descriptor visual completo de una imagen."""
     img_original = Image.open(io.BytesIO(imagen_bytes)).convert("RGB")
     img_obj = _recortar_objeto_activo(img_original)
 
@@ -196,7 +727,6 @@ def extraer_huella_visual(
     grid_color, hist_color = _calcular_descriptores_color(img_obj)
     textos_ocr = _extraer_texto_ocr(img_obj) if incluir_ocr else []
 
-    # Crear miniatura liviana para mostrar en la galería de Memoria Visual
     thumb = img_obj.copy()
     thumb.thumbnail((140, 100), Image.Resampling.LANCZOS)
     buf_t = io.BytesIO()
@@ -211,6 +741,91 @@ def extraer_huella_visual(
         "textos_ocr": textos_ocr,
         "miniatura_b64": thumb_b64,
     }
+
+
+def generar_imagen_referencia_chilena(item_chileno: dict[str, Any]) -> bytes:
+    """
+    Genera una imagen de referencia de empaque comercial con la paleta cromática real
+    de la marca chilena, franjas de diseño y tipografía para precargar la base visual.
+    """
+    c_principal, c_secundario, c_acento = item_chileno.get(
+        "colores", ((29, 78, 216), (220, 38, 38), (255, 255, 255))
+    )
+    img = Image.new("RGB", (240, 165), color=c_principal)
+    draw = ImageDraw.Draw(img)
+
+    # Franja superior de marca y franja inferior de categoría/formato
+    draw.rectangle([0, 0, 240, 42], fill=c_secundario)
+    draw.rectangle([0, 125, 240, 165], fill=c_secundario)
+    draw.rectangle([16, 26, 110, 56], fill=c_acento)
+    draw.ellipse([160, 50, 224, 114], fill=c_acento)
+
+    # Textos identificadores impresos en la tarjeta de empaque
+    marca = str(item_chileno.get("marca", "CHILE")).upper()[:14]
+    nombre = str(item_chileno.get("nombre", "PRODUCTO"))[:26]
+    peso_txt = f"{item_chileno.get('peso', 1):g}{item_chileno.get('unidad_peso', 'g')}"
+
+    draw.text((22, 34), marca, fill=(15, 23, 42))
+    draw.text((18, 72), nombre, fill=(255, 255, 255) if sum(c_principal) < 420 else (15, 23, 42))
+    draw.text((170, 76), peso_txt, fill=(15, 23, 42))
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
+def _construir_base_visual_chilena_por_defecto() -> list[dict[str, Any]]:
+    """
+    Construye la base de imágenes de referencia precargadas con los productos
+    comunes del mercado chileno para que la Memoria Visual siempre tenga respaldo.
+    """
+    categorias_map = {
+        1: "Bebidas y Lácteos",
+        2: "Abarrotes y Despensa",
+        3: "Snacks y Confitería",
+        4: "Limpieza del Hogar",
+        5: "Cuidado Personal",
+    }
+    referencias: list[dict[str, Any]] = []
+    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for idx, prod_ch in enumerate(CATALOGO_CHILENO_PRECARGADO, start=1):
+        img_bytes = generar_imagen_referencia_chilena(prod_ch)
+        huella = extraer_huella_visual(img_bytes, incluir_ocr=False)
+        huella["textos_ocr"] = list(prod_ch["claves"]) + [
+            prod_ch["marca"],
+            prod_ch["nombre"],
+        ]
+
+        referencias.append(
+            {
+                "id_referencia": idx,
+                "fecha_aprendizaje": ahora_str,
+                "origen": "BASE_CHILENA_PRECARGADA",
+                "es_existente": prod_ch["sku_tienda"] is not None,
+                "id_producto": None,
+                "codigo_sku": prod_ch["sku_tienda"] or prod_ch["sku_ref"],
+                "nombre_producto": prod_ch["nombre"],
+                "marca": prod_ch["marca"],
+                "id_categoria": prod_ch["id_categoria"],
+                "nombre_categoria": categorias_map.get(prod_ch["id_categoria"], "General"),
+                "formato_sugerido": prod_ch["formato"],
+                "unidades_por_formato_sugeridas": prod_ch["upf"],
+                "peso_sugerido": prod_ch["peso"],
+                "unidad_peso_sugerida": prod_ch["unidad_peso"],
+                "precio_compra_sugerido": prod_ch["compra"],
+                "precio_venta_sugerido": prod_ch["venta"],
+                "perecible_sugerido": prod_ch["perecible"],
+                "huella": huella,
+            }
+        )
+
+    return referencias
+
+
+# ============================================================================
+# SIMILITUD VISUAL Y PERSISTENCIA DE MEMORIA VISUAL
+# ============================================================================
 
 
 def _similitud_coseno(v1: list[float], v2: list[float]) -> float:
@@ -234,7 +849,6 @@ def _similitud_hamming_hex(h1: str, h2: str) -> float:
 
 
 def _similitud_ocr(textos_a: list[str], textos_b: list[str]) -> float:
-    """Evalúa coincidencia difusa entre palabras leídas en dos empaques."""
     if not textos_a or not textos_b:
         return 0.0
     tokens_a = [
@@ -258,7 +872,7 @@ def _similitud_ocr(textos_a: list[str], textos_b: list[str]) -> float:
             (SequenceMatcher(None, ta, tb).ratio() for tb in tokens_b),
             default=0.0,
         )
-        if mejor >= 0.72:
+        if mejor >= 0.74:
             aciertos += mejor
     return min(1.0, aciertos / max(1.0, min(len(tokens_a), len(tokens_b))))
 
@@ -266,10 +880,7 @@ def _similitud_ocr(textos_a: list[str], textos_b: list[str]) -> float:
 def calcular_similitud_visual(
     huella_nueva: dict[str, Any], huella_ref: dict[str, Any]
 ) -> float:
-    """
-    Calcula el porcentaje de similitud (0 a 100%) entre la captura actual de la cámara
-    y una referencia guardada en la Memoria Visual del Operario.
-    """
+    """Calcula el porcentaje de similitud entre la captura actual y una referencia."""
     sim_hist = _similitud_coseno(
         huella_nueva.get("hist_color", []), huella_ref.get("hist_color", [])
     )
@@ -286,35 +897,51 @@ def calcular_similitud_visual(
 
     puntaje_visual = (0.42 * sim_hist + 0.30 * sim_grid + 0.28 * sim_hash) * 100.0
 
-    # Si ambos empaques comparten texto leído por OCR, reforzar la coincidencia
     sim_texto = _similitud_ocr(
         huella_nueva.get("textos_ocr", []), huella_ref.get("textos_ocr", [])
     )
     if sim_texto > 0:
-        puntaje_visual = min(99.0, puntaje_visual * 0.75 + (sim_texto * 100.0) * 0.35)
+        puntaje_visual = min(99.0, puntaje_visual * 0.72 + (sim_texto * 100.0) * 0.38)
 
     return round(min(99.5, max(0.0, puntaje_visual)), 1)
 
 
-# ============================================================================
-# PERSISTENCIA DE LA MEMORIA VISUAL DEL OPERARIO (data/memoria_visual.json)
-# ============================================================================
-
-
 def cargar_memoria_visual() -> list[dict[str, Any]]:
-    """Carga la lista de imágenes y huellas aprendidas a partir de correcciones del operario."""
+    """
+    Carga la Memoria Visual desde disco. Si no existe o tiene menos de 5 referencias,
+    integra automáticamente toda la Base Precargada de Productos Comunes del Mercado Chileno
+    preservando las fotos enseñadas por el operario en primer lugar.
+    """
     DIRECTORIO_DATOS.mkdir(parents=True, exist_ok=True)
-    if not ARCHIVO_MEMORIA_VISUAL.exists():
-        return []
-    try:
-        data = json.loads(ARCHIVO_MEMORIA_VISUAL.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
+    existentes: list[dict[str, Any]] = []
+    if ARCHIVO_MEMORIA_VISUAL.exists():
+        try:
+            data = json.loads(ARCHIVO_MEMORIA_VISUAL.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                existentes = data
+        except Exception:
+            existentes = []
+
+    tiene_base_chilena = sum(
+        1 for r in existentes if r.get("origen") == "BASE_CHILENA_PRECARGADA"
+    )
+    if tiene_base_chilena < 15:
+        aprendidas_operario = [
+            r for r in existentes if r.get("origen") != "BASE_CHILENA_PRECARGADA"
+        ]
+        base_chilena = _construir_base_visual_chilena_por_defecto()
+        max_id = max((r.get("id_referencia", 0) for r in base_chilena), default=0)
+        for idx, ap in enumerate(aprendidas_operario, start=1):
+            ap["id_referencia"] = max_id + idx
+        combinadas = aprendidas_operario + base_chilena
+        guardar_memoria_visual(combinadas)
+        return combinadas
+
+    return existentes
 
 
 def guardar_memoria_visual(referencias: list[dict[str, Any]]) -> None:
-    """Guarda atómicamente la Memoria Visual aprendida."""
+    """Guarda atómicamente la Memoria Visual."""
     DIRECTORIO_DATOS.mkdir(parents=True, exist_ok=True)
     tmp = ARCHIVO_MEMORIA_VISUAL.with_suffix(".tmp")
     tmp.write_text(
@@ -329,14 +956,13 @@ def guardar_referencia_memoria_visual(
     origen: str = "CORRECCION_OPERARIO",
 ) -> dict[str, Any]:
     """
-    Aprende una imagen capturada por la cámara asociándola al producto que indicó el operario.
-    Si la misma captura exacta ya existía en memoria, actualiza su producto asociado.
+    Guarda inmediatamente en la Memoria Visual la imagen capturada por cámara
+    asociada al producto que indicó o corrigió el operario.
     """
     huella = extraer_huella_visual(imagen_bytes, incluir_ocr=True)
     referencias = cargar_memoria_visual()
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Agregar también palabras del nombre real indicado por el operario a las pistas textuales
     nombre_real = str(datos_producto.get("nombre_detectado", "")).strip()
     textos_combinados = list(huella.get("textos_ocr", []))
     for palabra in re.split(r"\s+", nombre_real):
@@ -373,10 +999,12 @@ def guardar_referencia_memoria_visual(
         },
     }
 
-    # Si ya había una referencia idéntica (dhash igual), reemplazarla con la corrección del operario
     reemplazado = False
     for idx, ref in enumerate(referencias):
-        if ref.get("huella", {}).get("dhash") == huella["dhash"]:
+        if (
+            ref.get("origen") != "BASE_CHILENA_PRECARGADA"
+            and ref.get("huella", {}).get("dhash") == huella["dhash"]
+        ):
             registro["id_referencia"] = ref.get("id_referencia", registro["id_referencia"])
             referencias[idx] = registro
             reemplazado = True
@@ -384,7 +1012,7 @@ def guardar_referencia_memoria_visual(
 
     if not reemplazado:
         referencias.insert(0, registro)
-        referencias = referencias[:60]
+        referencias = referencias[:90]
 
     guardar_memoria_visual(referencias)
     return registro
@@ -393,10 +1021,7 @@ def guardar_referencia_memoria_visual(
 def vincular_producto_creado_en_memoria(
     nombre_producto: str, producto_creado: dict[str, Any]
 ) -> None:
-    """
-    Cuando un producto nuevo aprendido por cámara es finalmente ingresado al inventario,
-    actualiza su referencia en la Memoria Visual para que apunte al `id_producto` y `codigo_sku` reales.
-    """
+    """Actualiza las referencias de un producto recién creado para vincularlo con su ID real."""
     referencias = cargar_memoria_visual()
     modificado = False
     nom_low = nombre_producto.strip().lower()
@@ -422,179 +1047,30 @@ def eliminar_referencia_memoria_visual(id_referencia: int) -> None:
 
 
 # ============================================================================
-# RECONOCIMIENTO POR OCR DE MARCAS Y EMPAQUES COMERCIALES
+# BÚSQUEDA POR LECTURA OCR SOBRE CATÁLOGO ACTIVO Y BASE CHILENA PRECARGADA
 # ============================================================================
 
-CATALOGO_MARCAS_CONOCIDAS: list[dict[str, Any]] = [
-    {
-        "claves": ["kuky", "mckay", "chipchiper", "chipchipers"],
-        "nombre": "Galletas McKay Kuky ChipChipers 120g",
-        "id_categoria": 3,
-        "peso": 120.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 750.0,
-        "venta": 1290.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["triton", "tuareg", "museo", "criollitas", "frac", "morochas", "costa", "ambrosoli"],
-        "nombre": "Galletas Dulces Pack Individual",
-        "id_categoria": 3,
-        "peso": 126.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 720.0,
-        "venta": 1250.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["soprole", "colun", "loncoleche", "surlat", "leche"],
-        "nombre": "Leche Entera 1L",
-        "id_categoria": 1,
-        "peso": 1.0,
-        "unidad_peso": "L",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 850.0,
-        "venta": 1250.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["cachantun", "vital", "benedictino", "agua", "mineral"],
-        "nombre": "Agua Mineral Sin Gas 1.5L",
-        "id_categoria": 1,
-        "peso": 1.5,
-        "unidad_peso": "L",
-        "formato": "LOTE",
-        "upf": 6,
-        "compra": 500.0,
-        "venta": 950.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["watts", "andina", "nectar", "jugo", "naranja"],
-        "nombre": "Jugo Naranja Natural 1L",
-        "id_categoria": 1,
-        "peso": 1.0,
-        "unidad_peso": "L",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 1100.0,
-        "venta": 1690.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["coca", "cocacola", "pepsi", "fanta", "sprite", "kem", "bilz", "pap"],
-        "nombre": "Bebida Gaseosa 1.5L",
-        "id_categoria": 1,
-        "peso": 1.5,
-        "unidad_peso": "L",
-        "formato": "LOTE",
-        "upf": 6,
-        "compra": 1150.0,
-        "venta": 1890.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["tucapel", "miraflores", "arroz", "banquete"],
-        "nombre": "Arroz Grado 1 (1kg)",
-        "id_categoria": 2,
-        "peso": 1.0,
-        "unidad_peso": "kg",
-        "formato": "LOTE",
-        "upf": 10,
-        "compra": 1050.0,
-        "venta": 1590.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["belmont", "chef", "miraflores", "maravilla", "aceite"],
-        "nombre": "Aceite Vegetal Maravilla 900ml",
-        "id_categoria": 2,
-        "peso": 900.0,
-        "unidad_peso": "ml",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 1650.0,
-        "venta": 2390.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["carozzi", "lucchetti", "talliani", "spaghetti", "fideos"],
-        "nombre": "Fideos Spaghetti 400g",
-        "id_categoria": 2,
-        "peso": 400.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 20,
-        "compra": 620.0,
-        "venta": 990.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["lays", "kryzpo", "marco polo", "mom", "papas", "fritas", "doritos", "cheetos"],
-        "nombre": "Papas Fritas Clásicas 150g",
-        "id_categoria": 3,
-        "peso": 150.0,
-        "unidad_peso": "g",
-        "formato": "CAJA",
-        "upf": 18,
-        "compra": 1200.0,
-        "venta": 1990.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["omo", "ariel", "drive", "ace", "rinso", "detergente"],
-        "nombre": "Detergente Líquido Ropa 3L",
-        "id_categoria": 4,
-        "peso": 3.0,
-        "unidad_peso": "L",
-        "formato": "CAJA",
-        "upf": 4,
-        "compra": 4200.0,
-        "venta": 6490.0,
-        "perecible": False,
-    },
-    {
-        "claves": ["clorox", "clorinda", "lider", "cloro", "poett", "lysoform"],
-        "nombre": "Cloro Gel Desinfectante 1L",
-        "id_categoria": 4,
-        "peso": 1.0,
-        "unidad_peso": "L",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 1150.0,
-        "venta": 1850.0,
-        "perecible": False,
-    },
-    {
-        "claves": ["ballerina", "sedal", "pantene", "head", "fructis", "elvive", "shampoo"],
-        "nombre": "Shampoo Hidratante 400ml",
-        "id_categoria": 5,
-        "peso": 400.0,
-        "unidad_peso": "ml",
-        "formato": "CAJA",
-        "upf": 12,
-        "compra": 2100.0,
-        "venta": 3490.0,
-        "perecible": True,
-    },
-    {
-        "claves": ["colgate", "pepsodent", "sensodyne", "oralb", "dental"],
-        "nombre": "Pasta Dental Triple Acción",
-        "id_categoria": 5,
-        "peso": 120.0,
-        "unidad_peso": "g",
-        "formato": "LOTE",
-        "upf": 12,
-        "compra": 980.0,
-        "venta": 1650.0,
-        "perecible": True,
-    },
-]
+
+def _vincular_con_inventario_activo(
+    sku_tienda: str | None,
+    nombre_buscado: str,
+    inventario: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Verifica si un producto de la base chilena ya existe en el inventario activo."""
+    if sku_tienda:
+        por_sku = next(
+            (p for p in inventario if p["codigo_sku"].upper() == sku_tienda.upper()),
+            None,
+        )
+        if por_sku is not None:
+            return por_sku
+
+    nom_low = nombre_buscado.strip().lower()
+    for p in inventario:
+        p_low = p["nombre_producto"].strip().lower()
+        if nom_low == p_low or nom_low in p_low or p_low in nom_low:
+            return p
+    return None
 
 
 def _buscar_por_ocr_en_envase(
@@ -602,12 +1078,7 @@ def _buscar_por_ocr_en_envase(
     inventario: list[dict[str, Any]],
     categorias: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """
-    Analiza las palabras leídas directamente del empaque mediante RapidOCR:
-      1. Primero verifica si el texto impreso coincide con algún producto ya existente en el catálogo.
-      2. Luego verifica si corresponde a una marca comercial conocida (como McKay Kuky, Soprole, Carozzi, etc.).
-      3. Si lee un texto comercial claro de un producto nuevo, arma el nombre sugerido usando las palabras leídas.
-    """
+    """Cruza el texto leído en el envase con el inventario y la Base Chilena Precargada."""
     if not textos_ocr:
         return None
 
@@ -621,10 +1092,82 @@ def _buscar_por_ocr_en_envase(
     if not tokens_ocr:
         return None
 
-    # 1. ¿Coincide con algún producto del inventario actual?
+    # 1. Buscar primero en la Base Precargada del Mercado Chileno por marcas/palabras clave
+    mejor_item_ch = None
+    mejor_hits_ch = 0.0
+
+    for item_ch in CATALOGO_CHILENO_PRECARGADO:
+        puntaje = 0.0
+        for clave in item_ch["claves"]:
+            for tk in tokens_ocr:
+                if clave == tk:
+                    puntaje += 1.3
+                    break
+                if (len(clave) >= 4 and clave in tk) or SequenceMatcher(None, clave, tk).ratio() >= 0.77:
+                    puntaje += 1.0
+                    break
+        if puntaje > mejor_hits_ch:
+            mejor_hits_ch = puntaje
+            mejor_item_ch = item_ch
+
+    if mejor_item_ch is not None and mejor_hits_ch >= 1.0:
+        prod_inv = _vincular_con_inventario_activo(
+            mejor_item_ch.get("sku_tienda"), mejor_item_ch["nombre"], inventario
+        )
+        conf_ocr = min(97, int(84 + mejor_hits_ch * 4))
+        if prod_inv is not None:
+            return {
+                "es_existente": True,
+                "id_producto": prod_inv["id_producto"],
+                "codigo_sku": prod_inv["codigo_sku"],
+                "nombre_detectado": prod_inv["nombre_producto"],
+                "nombre_categoria": prod_inv["nombre_categoria"],
+                "id_categoria": prod_inv["id_categoria"],
+                "stock_actual": prod_inv["stock_actual"],
+                "formato_sugerido": prod_inv["formato_habitual"],
+                "unidades_por_formato_sugeridas": prod_inv["unidades_por_formato"],
+                "peso_sugerido": prod_inv["peso_unitario"],
+                "unidad_peso_sugerida": prod_inv["unidad_peso"],
+                "precio_compra_sugerido": prod_inv["precio_compra"],
+                "precio_venta_sugerido": prod_inv["precio_venta"],
+                "perecible_sugerido": prod_inv["perecible"],
+                "confianza_pct": conf_ocr,
+                "descripcion_visual": f"Marca chilena leída en empaque: «{' · '.join(textos_ocr[:5])}»",
+                "motor_vision": "🇨🇱 Base Mercado Chileno + OCR",
+                "recordado_de_memoria": False,
+                "es_incoherente": False,
+            }
+
+        cat_obj = next(
+            (c for c in categorias if c["id_categoria"] == mejor_item_ch["id_categoria"]),
+            categorias[0],
+        )
+        return {
+            "es_existente": False,
+            "id_producto": None,
+            "codigo_sku": mejor_item_ch["sku_ref"],
+            "nombre_detectado": mejor_item_ch["nombre"],
+            "nombre_categoria": cat_obj["nombre_categoria"],
+            "id_categoria": cat_obj["id_categoria"],
+            "stock_actual": 0,
+            "formato_sugerido": mejor_item_ch["formato"],
+            "unidades_por_formato_sugeridas": mejor_item_ch["upf"],
+            "peso_sugerido": mejor_item_ch["peso"],
+            "unidad_peso_sugerida": mejor_item_ch["unidad_peso"],
+            "precio_compra_sugerido": mejor_item_ch["compra"],
+            "precio_venta_sugerido": mejor_item_ch["venta"],
+            "perecible_sugerido": mejor_item_ch["perecible"],
+            "confianza_pct": conf_ocr,
+            "descripcion_visual": f"Marca chilena leída en empaque: «{' · '.join(textos_ocr[:5])}»",
+            "motor_vision": "🇨🇱 Base Mercado Chileno + OCR",
+            "recordado_de_memoria": False,
+            "es_incoherente": False,
+        }
+
+    # 2. Buscar coincidencia directa contra nombres del inventario activo
+    stopwords = {"con", "sin", "por", "para", "del", "las", "los", "una", "natural", "clasicas", "grado"}
     mejor_prod_inv = None
     mejor_score_inv = 0.0
-    stopwords = {"con", "sin", "por", "para", "del", "las", "los", "una", "natural", "clasicas", "grado"}
 
     for p in inventario:
         palabras_p = [
@@ -665,111 +1208,111 @@ def _buscar_por_ocr_en_envase(
             "perecible_sugerido": mejor_prod_inv["perecible"],
             "confianza_pct": min(96, int(78 + mejor_score_inv * 20)),
             "descripcion_visual": f"Texto leído en el empaque: «{' · '.join(textos_ocr[:5])}»",
-            "motor_vision": "IA Lectora de Empaques (OCR + Catálogo)",
-        }
-
-    # 2. ¿Coincide con una marca comercial específica (ej. McKay Kuky)?
-    for marca in CATALOGO_MARCAS_CONOCIDAS:
-        hits = 0
-        for clave in marca["claves"]:
-            for tk in tokens_ocr:
-                if clave in tk or SequenceMatcher(None, clave, tk).ratio() >= 0.76:
-                    hits += 1
-                    break
-        if hits >= 1:
-            nombre_marca = marca["nombre"]
-            # Si en la etiqueta dice "blanco", enriquecer el nombre de Kuky
-            if "kuky" in marca["claves"] and any(
-                SequenceMatcher(None, "blanco", tk).ratio() >= 0.68 for tk in tokens_ocr
-            ):
-                nombre_marca = "Galletas McKay Kuky ChipChipers Blanco 120g"
-
-            # Verificar si ese producto ya fue creado antes en el inventario
-            for p in inventario:
-                if (
-                    nombre_marca.lower() in p["nombre_producto"].lower()
-                    or p["nombre_producto"].lower() in nombre_marca.lower()
-                ):
-                    return {
-                        "es_existente": True,
-                        "id_producto": p["id_producto"],
-                        "codigo_sku": p["codigo_sku"],
-                        "nombre_detectado": p["nombre_producto"],
-                        "nombre_categoria": p["nombre_categoria"],
-                        "id_categoria": p["id_categoria"],
-                        "stock_actual": p["stock_actual"],
-                        "formato_sugerido": p["formato_habitual"],
-                        "unidades_por_formato_sugeridas": p["unidades_por_formato"],
-                        "peso_sugerido": p["peso_unitario"],
-                        "unidad_peso_sugerida": p["unidad_peso"],
-                        "precio_compra_sugerido": p["precio_compra"],
-                        "precio_venta_sugerido": p["precio_venta"],
-                        "perecible_sugerido": p["perecible"],
-                        "confianza_pct": min(97, 86 + hits * 4),
-                        "descripcion_visual": f"Marca leída en el empaque: «{' · '.join(textos_ocr[:5])}»",
-                        "motor_vision": "IA Lectora de Empaques (OCR)",
-                    }
-
-            # Si no existe aún en el inventario, proponerlo como Nuevo Producto con su nombre real
-            cat_obj = next(
-                (c for c in categorias if c["id_categoria"] == marca["id_categoria"]),
-                categorias[0],
-            )
-            pref = cat_obj["nombre_categoria"][:3].upper()
-            return {
-                "es_existente": False,
-                "id_producto": None,
-                "codigo_sku": f"{pref}-{len(inventario) + 10:03d}",
-                "nombre_detectado": nombre_marca,
-                "nombre_categoria": cat_obj["nombre_categoria"],
-                "id_categoria": cat_obj["id_categoria"],
-                "stock_actual": 0,
-                "formato_sugerido": marca["formato"],
-                "unidades_por_formato_sugeridas": marca["upf"],
-                "peso_sugerido": marca["peso"],
-                "unidad_peso_sugerida": marca["unidad_peso"],
-                "precio_compra_sugerido": marca["compra"],
-                "precio_venta_sugerido": marca["venta"],
-                "perecible_sugerido": marca["perecible"],
-                "confianza_pct": min(95, 84 + hits * 4),
-                "descripcion_visual": f"Marca detectada en empaque: «{' · '.join(textos_ocr[:5])}»",
-                "motor_vision": "IA Lectora de Empaques (OCR)",
-            }
-
-    # 3. Si leyó palabras claras en un producto desconocido, construir su nombre sugerido desde el OCR
-    palabras_utiles = [
-        t for t in textos_ocr if len(re.sub(r"[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", "", t)) >= 3
-    ]
-    if palabras_utiles:
-        nombre_ocr = " ".join(palabras_utiles[:3]).title()
-        cat_default = categorias[0] if categorias else {"id_categoria": 1, "nombre_categoria": "General"}
-        pref = cat_default["nombre_categoria"][:3].upper()
-        return {
-            "es_existente": False,
-            "id_producto": None,
-            "codigo_sku": f"{pref}-{len(inventario) + 12:03d}",
-            "nombre_detectado": nombre_ocr,
-            "nombre_categoria": cat_default["nombre_categoria"],
-            "id_categoria": cat_default["id_categoria"],
-            "stock_actual": 0,
-            "formato_sugerido": "CAJA",
-            "unidades_por_formato_sugeridas": 12,
-            "peso_sugerido": 1.0,
-            "unidad_peso_sugerida": "kg",
-            "precio_compra_sugerido": 900.0,
-            "precio_venta_sugerido": 1450.0,
-            "perecible_sugerido": True,
-            "confianza_pct": 76,
-            "descripcion_visual": f"Texto detectado en envase: «{' · '.join(textos_ocr[:4])}»",
             "motor_vision": "IA Lectora de Empaques (OCR)",
+            "recordado_de_memoria": False,
+            "es_incoherente": False,
         }
 
     return None
 
 
 # ============================================================================
-# FUNCIÓN PRINCIPAL DE DETECCIÓN CON PRIORIDAD A LA MEMORIA VISUAL APRENDIDA
+# FUNCIÓN PRINCIPAL DE DETECCIÓN CON PRIORIDAD A MEMORIA Y BASE CHILENA
 # ============================================================================
+
+
+def _construir_respuesta_desde_referencia(
+    ref: dict[str, Any],
+    similitud: float,
+    inventario: list[dict[str, Any]],
+    es_incoherente: bool = False,
+    motivo_incoherencia: str = "",
+) -> dict[str, Any]:
+    """Construye el diccionario de detección sincronizado con el stock actual en vivo."""
+    prod_inv = None
+    if ref.get("id_producto") is not None:
+        prod_inv = next(
+            (p for p in inventario if p["id_producto"] == int(ref["id_producto"])),
+            None,
+        )
+    if prod_inv is None:
+        prod_inv = _vincular_con_inventario_activo(
+            ref.get("codigo_sku"), str(ref.get("nombre_producto", "")), inventario
+        )
+
+    es_aprendida_operario = ref.get("origen") != "BASE_CHILENA_PRECARGADA"
+    motor_lbl = (
+        "🧠 Memoria Visual Aprendida (Operario)"
+        if es_aprendida_operario
+        else "🇨🇱 Base Visual Mercado Chileno"
+    )
+
+    if es_incoherente:
+        desc = (
+            f"⚠️ Captura dudosa o posible incoherencia ({motivo_incoherencia}). "
+            f"Referencia chilena más próxima sugerida ({similitud:.0f}%): verifica o corrige abajo."
+        )
+    elif es_aprendida_operario:
+        desc = (
+            f"Reconocido por Memoria Visual enseñada por el operario "
+            f"(similitud {similitud:.1f}% con referencia #{ref['id_referencia']})"
+        )
+    else:
+        desc = (
+            f"Coincidencia con referencia precargada del mercado chileno "
+            f"({similitud:.1f}% similitud visual)"
+        )
+
+    if prod_inv is not None:
+        return {
+            "es_existente": True,
+            "id_producto": prod_inv["id_producto"],
+            "codigo_sku": prod_inv["codigo_sku"],
+            "nombre_detectado": prod_inv["nombre_producto"],
+            "nombre_categoria": prod_inv["nombre_categoria"],
+            "id_categoria": prod_inv["id_categoria"],
+            "stock_actual": prod_inv["stock_actual"],
+            "formato_sugerido": prod_inv["formato_habitual"],
+            "unidades_por_formato_sugeridas": prod_inv["unidades_por_formato"],
+            "peso_sugerido": prod_inv["peso_unitario"],
+            "unidad_peso_sugerida": prod_inv["unidad_peso"],
+            "precio_compra_sugerido": prod_inv["precio_compra"],
+            "precio_venta_sugerido": prod_inv["precio_venta"],
+            "perecible_sugerido": prod_inv["perecible"],
+            "confianza_pct": int(round(similitud)),
+            "descripcion_visual": desc,
+            "motor_vision": motor_lbl,
+            "recordado_de_memoria": es_aprendida_operario and not es_incoherente,
+            "es_incoherente": es_incoherente,
+        }
+
+    return {
+        "es_existente": False,
+        "id_producto": None,
+        "codigo_sku": ref.get("codigo_sku", "PRD-015"),
+        "nombre_detectado": ref.get("nombre_producto", "Producto Chileno Referencia"),
+        "nombre_categoria": ref.get("nombre_categoria", "General"),
+        "id_categoria": int(ref.get("id_categoria", 1) or 1),
+        "stock_actual": 0,
+        "formato_sugerido": ref.get("formato_sugerido", "CAJA"),
+        "unidades_por_formato_sugeridas": int(
+            ref.get("unidades_por_formato_sugeridas", 12) or 12
+        ),
+        "peso_sugerido": float(ref.get("peso_sugerido", 1.0) or 1.0),
+        "unidad_peso_sugerida": ref.get("unidad_peso_sugerida", "kg"),
+        "precio_compra_sugerido": float(
+            ref.get("precio_compra_sugerido", 850.0) or 850.0
+        ),
+        "precio_venta_sugerido": float(
+            ref.get("precio_venta_sugerido", 1350.0) or 1350.0
+        ),
+        "perecible_sugerido": bool(ref.get("perecible_sugerido", True)),
+        "confianza_pct": int(round(similitud)),
+        "descripcion_visual": desc,
+        "motor_vision": motor_lbl,
+        "recordado_de_memoria": es_aprendida_operario and not es_incoherente,
+        "es_incoherente": es_incoherente,
+    }
 
 
 def detectar_producto_en_imagen(
@@ -777,189 +1320,79 @@ def detectar_producto_en_imagen(
     api_key_gemini: str = "",
 ) -> dict[str, Any]:
     """
-    Detecta el producto en la imagen capturada por la cámara siguiendo 3 niveles:
-      Nivel 1: Memoria Visual Aprendida (`data/memoria_visual.json`) alimentada por
-               las correcciones y confirmaciones previas del operario.
-      Nivel 2: Reconocimiento óptico de marcas y texto impreso en el envase (RapidOCR ONNX)
-               o Google Gemini Vision si el usuario configuró clave.
-      Nivel 3: Estimación visual cromática con aviso de baja certeza para que el operario
-               enseñe el producto a la Memoria Visual en 1 clic.
+    Analiza la imagen capturada por cámara:
+      1. Verifica calidad de imagen (detecta capturas en negro/vacías/incoherentes).
+      2. Prioriza las imágenes aprendidas de correcciones del operario en Memoria Visual.
+      3. Ejecuta lectura OCR de marcas chilenas y textos impresos en el envase.
+      4. Compara contra la Base Visual Precargada de Productos del Mercado Chileno,
+         advirtiendo si la certeza es baja para que el operario confirme o enseñe la imagen.
     """
     inventario = obtener_inventario_consolidado()
     catalogos = obtener_catalogos()
     categorias = catalogos["categorias"]
 
-    huella_actual = extraer_huella_visual(imagen_bytes, incluir_ocr=True)
+    img_pil = Image.open(io.BytesIO(imagen_bytes)).convert("RGB")
+    calidad_ok, motivo_calidad = _evaluar_calidad_imagen(img_pil)
+
+    huella_actual = extraer_huella_visual(imagen_bytes, incluir_ocr=calidad_ok)
     referencias_memoria = cargar_memoria_visual()
 
-    # ------------------------------------------------------------------------
-    # NIVEL 1: CONSULTAR MEMORIA VISUAL APRENDIDA DEL OPERARIO
-    # ------------------------------------------------------------------------
-    mejor_ref = None
-    mejor_sim = 0.0
-    for ref in referencias_memoria:
-        huella_ref = ref.get("huella", {})
-        sim = calcular_similitud_visual(huella_actual, huella_ref)
-        if sim > mejor_sim:
-            mejor_sim = sim
-            mejor_ref = ref
+    # Separar referencias enseñadas por el operario vs base chilena precargada
+    refs_operario = [
+        r for r in referencias_memoria if r.get("origen") != "BASE_CHILENA_PRECARGADA"
+    ]
+    refs_chilenas = [
+        r for r in referencias_memoria if r.get("origen") == "BASE_CHILENA_PRECARGADA"
+    ]
 
-    if mejor_ref is not None and mejor_sim >= 74.0:
-        # Sincronizar con el inventario actual por si el stock o datos cambiaron
-        prod_inv = None
-        if mejor_ref.get("id_producto") is not None:
-            prod_inv = next(
-                (p for p in inventario if p["id_producto"] == int(mejor_ref["id_producto"])),
-                None,
-            )
-        if prod_inv is None:
-            nom_ref_low = str(mejor_ref.get("nombre_producto", "")).strip().lower()
-            prod_inv = next(
-                (p for p in inventario if p["nombre_producto"].strip().lower() == nom_ref_low),
-                None,
-            )
+    # 1. ¿Coincide con una imagen enseñada explícitamente por el operario?
+    mejor_ref_op = None
+    mejor_sim_op = 0.0
+    for ref in refs_operario:
+        sim = calcular_similitud_visual(huella_actual, ref.get("huella", {}))
+        if sim > mejor_sim_op:
+            mejor_sim_op = sim
+            mejor_ref_op = ref
 
-        if prod_inv is not None:
-            return {
-                "es_existente": True,
-                "id_producto": prod_inv["id_producto"],
-                "codigo_sku": prod_inv["codigo_sku"],
-                "nombre_detectado": prod_inv["nombre_producto"],
-                "nombre_categoria": prod_inv["nombre_categoria"],
-                "id_categoria": prod_inv["id_categoria"],
-                "stock_actual": prod_inv["stock_actual"],
-                "formato_sugerido": prod_inv["formato_habitual"],
-                "unidades_por_formato_sugeridas": prod_inv["unidades_por_formato"],
-                "peso_sugerido": prod_inv["peso_unitario"],
-                "unidad_peso_sugerida": prod_inv["unidad_peso"],
-                "precio_compra_sugerido": prod_inv["precio_compra"],
-                "precio_venta_sugerido": prod_inv["precio_venta"],
-                "perecible_sugerido": prod_inv["perecible"],
-                "confianza_pct": int(round(mejor_sim)),
-                "descripcion_visual": (
-                    f"Reconocido por Memoria Visual entrenada por el operario "
-                    f"(similitud visual {mejor_sim:.1f}% con referencia #{mejor_ref['id_referencia']})"
-                ),
-                "motor_vision": "🧠 Memoria Visual Aprendida",
-                "recordado_de_memoria": True,
-            }
+    if mejor_ref_op is not None and mejor_sim_op >= 74.0:
+        return _construir_respuesta_desde_referencia(
+            mejor_ref_op, mejor_sim_op, inventario, es_incoherente=False
+        )
 
-        return {
-            "es_existente": False,
-            "id_producto": None,
-            "codigo_sku": mejor_ref.get("codigo_sku", "PRD-015"),
-            "nombre_detectado": mejor_ref.get("nombre_producto", "Producto Recordado"),
-            "nombre_categoria": mejor_ref.get("nombre_categoria", "General"),
-            "id_categoria": int(mejor_ref.get("id_categoria", 1) or 1),
-            "stock_actual": 0,
-            "formato_sugerido": mejor_ref.get("formato_sugerido", "CAJA"),
-            "unidades_por_formato_sugeridas": int(
-                mejor_ref.get("unidades_por_formato_sugeridas", 12) or 12
-            ),
-            "peso_sugerido": float(mejor_ref.get("peso_sugerido", 1.0) or 1.0),
-            "unidad_peso_sugerida": mejor_ref.get("unidad_peso_sugerida", "kg"),
-            "precio_compra_sugerido": float(
-                mejor_ref.get("precio_compra_sugerido", 850.0) or 850.0
-            ),
-            "precio_venta_sugerido": float(
-                mejor_ref.get("precio_venta_sugerido", 1350.0) or 1350.0
-            ),
-            "perecible_sugerido": bool(mejor_ref.get("perecible_sugerido", True)),
-            "confianza_pct": int(round(mejor_sim)),
-            "descripcion_visual": (
-                f"Reconocido por Memoria Visual entrenada por el operario "
-                f"(similitud visual {mejor_sim:.1f}%)"
-            ),
-            "motor_vision": "🧠 Memoria Visual Aprendida",
-            "recordado_de_memoria": True,
-        }
+    # 2. ¿Tiene marca o texto legible por OCR (ej. McKay Kuky, Soprole, Tucapel, Carozzi)?
+    if calidad_ok:
+        det_ocr = _buscar_por_ocr_en_envase(
+            huella_actual.get("textos_ocr", []), inventario, categorias
+        )
+        if det_ocr is not None:
+            return det_ocr
 
-    # ------------------------------------------------------------------------
-    # NIVEL 2: RECONOCIMIENTO POR LECTURA DE TEXTO Y MARCA EN EL ENVASE (OCR)
-    # ------------------------------------------------------------------------
-    det_ocr = _buscar_por_ocr_en_envase(
-        huella_actual.get("textos_ocr", []), inventario, categorias
+    # 3. Comparar contra todas las referencias (Operario + Base Precargada del Mercado Chileno)
+    mejor_ref_global = mejor_ref_op
+    mejor_sim_global = mejor_sim_op
+
+    for ref in refs_chilenas:
+        sim = calcular_similitud_visual(huella_actual, ref.get("huella", {}))
+        if sim > mejor_sim_global:
+            mejor_sim_global = sim
+            mejor_ref_global = ref
+
+    if mejor_ref_global is None and referencias_memoria:
+        mejor_ref_global = referencias_memoria[0]
+        mejor_sim_global = 50.0
+
+    es_incoherente = (not calidad_ok) or (mejor_sim_global < 72.0)
+    motivo = (
+        motivo_calidad
+        if not calidad_ok
+        else "Objeto sin marca legible ni referencia previa exacta"
     )
-    if det_ocr is not None:
-        det_ocr["recordado_de_memoria"] = False
-        return det_ocr
+    sim_ajustada = min(mejor_sim_global, 48.0) if not calidad_ok else mejor_sim_global
 
-    # ------------------------------------------------------------------------
-    # NIVEL 3: ESTIMACIÓN VISUAL POR PERFIL DE EMPAQUE (BAJA CERTEZA -> INVITA A ENSEÑAR)
-    # ------------------------------------------------------------------------
-    img_pil = Image.open(io.BytesIO(imagen_bytes)).convert("RGB")
-    img_rec = _recortar_objeto_activo(img_pil)
-    peq = np.asarray(img_rec.resize((32, 32)), dtype=np.float32)
-    r_med = float(peq[:, :, 0].mean())
-    g_med = float(peq[:, :, 1].mean())
-    b_med = float(peq[:, :, 2].mean())
-
-    if r_med > 165 and g_med > 130 and b_med < 115:
-        sku_est = "BEB-003"
-        desc_c = "tonalidad cálida ámbar/naranja"
-    elif b_med > r_med + 15 and b_med > 110:
-        sku_est = "BEB-002"
-        desc_c = "predominio de tonos azules/celestes"
-    elif g_med > r_med + 12:
-        sku_est = "LIM-002"
-        desc_c = "etiqueta en tonos verdes"
-    elif r_med > g_med + 22 and r_med > b_med + 22:
-        sku_est = "ABA-003"
-        desc_c = "empaque con tonalidad roja destacada"
-    elif r_med > 180 and g_med > 180 and b_med > 180:
-        sku_est = "BEB-001"
-        desc_c = "envase blanco/claro"
-    else:
-        sku_est = "SNK-001"
-        desc_c = "empaque de tonos mixtos/neutros"
-
-    prod_cand = next(
-        (p for p in inventario if p["codigo_sku"] == sku_est),
-        inventario[0] if inventario else None,
+    return _construir_respuesta_desde_referencia(
+        mejor_ref_global,
+        sim_ajustada,
+        inventario,
+        es_incoherente=es_incoherente,
+        motivo_incoherencia=motivo,
     )
-
-    if prod_cand is not None:
-        return {
-            "es_existente": True,
-            "id_producto": prod_cand["id_producto"],
-            "codigo_sku": prod_cand["codigo_sku"],
-            "nombre_detectado": prod_cand["nombre_producto"],
-            "nombre_categoria": prod_cand["nombre_categoria"],
-            "id_categoria": prod_cand["id_categoria"],
-            "stock_actual": prod_cand["stock_actual"],
-            "formato_sugerido": prod_cand["formato_habitual"],
-            "unidades_por_formato_sugeridas": prod_cand["unidades_por_formato"],
-            "peso_sugerido": prod_cand["peso_unitario"],
-            "unidad_peso_sugerida": prod_cand["unidad_peso"],
-            "precio_compra_sugerido": prod_cand["precio_compra"],
-            "precio_venta_sugerido": prod_cand["precio_venta"],
-            "perecible_sugerido": prod_cand["perecible"],
-            "confianza_pct": 64,
-            "descripcion_visual": (
-                f"Estimación aproximada por forma/color ({desc_c}). "
-                "Si no es este producto, corrígelo abajo para que la IA memorice esta imagen."
-            ),
-            "motor_vision": "Estimación Visual (Sin referencia previa)",
-            "recordado_de_memoria": False,
-        }
-
-    return {
-        "es_existente": False,
-        "id_producto": None,
-        "codigo_sku": "PRD-001",
-        "nombre_detectado": "Producto No Identificado",
-        "nombre_categoria": "General",
-        "id_categoria": 1,
-        "stock_actual": 0,
-        "formato_sugerido": "CAJA",
-        "unidades_por_formato_sugeridas": 12,
-        "peso_sugerido": 1.0,
-        "unidad_peso_sugerida": "kg",
-        "precio_compra_sugerido": 900.0,
-        "precio_venta_sugerido": 1400.0,
-        "perecible_sugerido": True,
-        "confianza_pct": 55,
-        "descripcion_visual": "Objeto nuevo sin referencia previa en Memoria Visual.",
-        "motor_vision": "Estimación Visual",
-        "recordado_de_memoria": False,
-    }

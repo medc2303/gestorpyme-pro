@@ -810,6 +810,7 @@ def render_tarjeta_deteccion_ia(det: dict[str, Any]) -> None:
     conf = int(det.get("confianza_pct", 90) or 90)
     motor = det.get("motor_vision", "IA de Visión")
     recordado = bool(det.get("recordado_de_memoria", False))
+    incoherente = bool(det.get("es_incoherente", False))
 
     if recordado:
         estilo_badge = "background-color:#15803d;"
@@ -819,12 +820,13 @@ def render_tarjeta_deteccion_ia(det: dict[str, Any]) -> None:
             "✨ La IA recordó este objeto gracias a una imagen de referencia confirmada previamente por el operario."
             "</div>"
         )
-    elif conf < 75:
+    elif incoherente or conf < 72:
         estilo_badge = "background-color:#b45309;"
-        texto_badge = f"⚠️ IA NO ESTÁ 100% SEGURA ({conf}% confianza &bull; {esc(motor)})"
+        texto_badge = f"⚠️ POSIBLE INCOHERENCIA / BAJA CERTEZA ({conf}% &bull; Respaldo Base Chilena)"
         nota_extra = (
             "<div style='font-size:0.8rem;color:#b45309;font-weight:600;margin-top:0.35rem;'>"
-            "💡 Si este no es el producto, presiona «No es este, corregir y guardar en Memoria Visual» para que la IA aprenda esta imagen."
+            "💡 En caso de captura dudosa o incoherente se muestra la referencia chilena más cercana. "
+            "Presiona «No es este, corregir y guardar en Memoria Visual» para enseñarle el producto exacto."
             "</div>"
         )
     else:

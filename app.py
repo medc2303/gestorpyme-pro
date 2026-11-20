@@ -21,7 +21,9 @@ from core.vision_scanner import (
     cargar_memoria_visual,
     detectar_producto_en_imagen,
     eliminar_referencia_memoria_visual,
+    generar_imagen_referencia_chilena,
     guardar_referencia_memoria_visual,
+    obtener_catalogo_chileno_referencia,
     vincular_producto_creado_en_memoria,
 )
 from core.store import (
@@ -105,6 +107,18 @@ if "scanner_last_img_hash" not in st.session_state:
 
 if "scanner_mensaje_exito" not in st.session_state:
     st.session_state["scanner_mensaje_exito"] = None
+
+if "scanner_cam_nonce" not in st.session_state:
+    st.session_state["scanner_cam_nonce"] = 0
+
+if "scanner_simulada_bytes" not in st.session_state:
+    st.session_state["scanner_simulada_bytes"] = None
+
+if "flash_ingreso" not in st.session_state:
+    st.session_state["flash_ingreso"] = None
+
+if "flash_merma" not in st.session_state:
+    st.session_state["flash_merma"] = None
 
 if "mensajes_ia" not in st.session_state:
     st.session_state["mensajes_ia"] = [
@@ -662,73 +676,143 @@ def render_bloque_escaner_camara(
                 st.session_state["scanner_estado"] = "SIN_CAPTURA"
                 st.session_state["scanner_deteccion"] = None
                 st.session_state["scanner_last_img_hash"] = None
+                st.session_state["scanner_simulada_bytes"] = None
+                st.session_state["scanner_cam_nonce"] = st.session_state.get("scanner_cam_nonce", 0) + 1
                 st.rerun()
+
+        nonce = st.session_state.get("scanner_cam_nonce", 0)
 
         foto_camara = st.camera_input(
             "Apunta la cámara al producto y presiona 'Take Photo' para que la IA detecte el objeto",
-            key="widget_camara_ia",
+            key=f"widget_camara_ia_{nonce}",
         )
 
-        with st.expander("📁 ¿Usando un PC sin cámara web? Subir foto del producto para probar la IA"):
-            foto_archivo = st.file_uploader(
-                "Selecciona una fotografía del producto (JPG/PNG)",
-                type=["jpg", "jpeg", "png", "webp"],
-                key="widget_archivo_ia",
-            )
+        catalogo_chileno = obtener_catalogo_chileno_referencia()
+        with st.expander("📁 ¿Sin cámara web o deseas probar con la Base Precargada del Mercado Chileno?"):
+            cf_up, cf_ch = st.columns([1.15, 1.35])
+            with cf_up:
+                foto_archivo = st.file_uploader(
+                    "Subir fotografía de producto (JPG/PNG)",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    key=f"widget_archivo_ia_{nonce}",
+                )
+            with cf_ch:
+                opciones_sim = {
+                    i: f"🇨🇱 {item['marca']} — {item['nombre']}"
+                    for i, item in enumerate(catalogo_chileno)
+                }
+                idx_sim = st.selectbox(
+                    "O probar con referencia chilena precargada",
+                    options=list(opciones_sim.keys()),
+                    format_func=lambda k: opciones_sim[k],
+                    key="sel_sim_chileno",
+                )
+                if st.button(
+                    "📸 Cargar Referencia Chilena en el Escáner",
+                    width="stretch",
+                    key="btn_cargar_ref_chilena",
+                ):
+                    item_sim = catalogo_chileno[idx_sim]
+                    img_sim_bytes = generar_imagen_referencia_chilena(item_sim)
+                    st.session_state["scanner_simulada_bytes"] = img_sim_bytes
+                    st.session_state["scanner_last_img_bytes"] = img_sim_bytes
+                    st.session_state["scanner_last_img_hash"] = hashlib.md5(img_sim_bytes).hexdigest()
+                    st.session_state["scanner_deteccion"] = detectar_producto_en_imagen(
+                        img_sim_bytes,
+                        api_key_gemini=st.session_state.get("cfg_apikey_ia", ""),
+                    )
+                    st.session_state["scanner_estado"] = "ESPERANDO_CONFIRMACION"
+                    st.session_state["scanner_mensaje_exito"] = None
+                    st.rerun()
 
         referencias_mem = cargar_memoria_visual()
+        refs_op = [r for r in referencias_mem if r.get("origen") != "BASE_CHILENA_PRECARGADA"]
+        refs_ch = [r for r in referencias_mem if r.get("origen") == "BASE_CHILENA_PRECARGADA"]
+
         with st.expander(
-            f"🧠 Memoria Visual Aprendida por la IA ({len(referencias_mem)} imagen(es) de referencia guardadas)"
+            f"🧠 Base de Imágenes de Referencia ({len(refs_op)} aprendida(s) del operario + {len(refs_ch)} precargadas del mercado chileno)"
         ):
-            if not referencias_mem:
-                st.caption(
-                    "Aún no hay imágenes guardadas en la Memoria Visual. Cuando corrijas o confirmes un producto escaneado, la IA guardará su imagen aquí para recordarlo en el futuro."
-                )
-            else:
-                st.caption(
-                    "Estas imágenes fueron confirmadas o corregidas por el operario. Si vuelves a enfocar cualquiera de estos objetos, la IA lo reconocerá automáticamente:"
-                )
-                for ref in referencias_mem[:8]:
-                    cr_img, cr_info, cr_del = st.columns([0.65, 2.5, 0.7])
-                    with cr_img:
-                        b64_t = ref.get("huella", {}).get("miniatura_b64", "")
-                        if b64_t:
-                            st.html(
-                                f'<img src="data:image/jpeg;base64,{b64_t}" '
-                                f'style="width:72px;height:52px;object-fit:cover;border-radius:6px;border:1px solid #cbd5e1;" />'
+            tab_mem_op, tab_mem_ch = st.tabs(
+                [
+                    f"👨‍🔧 Aprendidas del Operario ({len(refs_op)})",
+                    f"🇨🇱 Base Precargada Mercado Chileno ({len(refs_ch)})",
+                ]
+            )
+            with tab_mem_op:
+                if not refs_op:
+                    st.caption(
+                        "Cuando corrijas o confirmes una foto tomada con tu cámara, se guardará aquí para que la IA la recuerde siempre."
+                    )
+                else:
+                    for ref in refs_op[:10]:
+                        cr_img, cr_info, cr_del = st.columns([0.65, 2.5, 0.7])
+                        with cr_img:
+                            b64_t = ref.get("huella", {}).get("miniatura_b64", "")
+                            if b64_t:
+                                st.html(
+                                    f'<img src="data:image/jpeg;base64,{b64_t}" '
+                                    f'style="width:72px;height:52px;object-fit:cover;border-radius:6px;border:1px solid #cbd5e1;" />'
+                                )
+                        with cr_info:
+                            origen_lbl = (
+                                "Enseñada por corrección del operario"
+                                if ref.get("origen") == "CORRECCION_OPERARIO"
+                                else "Confirmada por operario"
                             )
-                    with cr_info:
-                        origen_lbl = (
-                            "Enseñada por corrección del operario"
-                            if ref.get("origen") == "CORRECCION_OPERARIO"
-                            else "Confirmada por operario"
+                            st.markdown(
+                                f"**`{ref.get('codigo_sku', '')}` — {ref.get('nombre_producto', '')}**  \n"
+                                f"<span style='font-size:0.76rem;color:#64748b;'>"
+                                f"{origen_lbl} &bull; Guardada: {ref.get('fecha_aprendizaje', '')}"
+                                f"</span>",
+                                unsafe_allow_html=True,
+                            )
+                        with cr_del:
+                            if st.button(
+                                "🗑️ Olvidar",
+                                key=f"del_mem_ref_{ref.get('id_referencia')}",
+                                width="stretch",
+                            ):
+                                eliminar_referencia_memoria_visual(int(ref["id_referencia"]))
+                                st.session_state["scanner_last_img_hash"] = None
+                                st.toast("Referencia eliminada en tiempo real.", icon="🗑️")
+                                st.rerun()
+
+            with tab_mem_ch:
+                st.caption(
+                    "Base permanente de productos comunes en almacenes y minimarkets chilenos usada como referencia visual y de marcas (OCR):"
+                )
+                cols_ch = st.columns(3)
+                for idx_c, ref_c in enumerate(refs_ch[:18]):
+                    with cols_ch[idx_c % 3]:
+                        b64_c = ref_c.get("huella", {}).get("miniatura_b64", "")
+                        img_tag = (
+                            f'<img src="data:image/jpeg;base64,{b64_c}" '
+                            f'style="width:52px;height:38px;object-fit:cover;border-radius:4px;border:1px solid #cbd5e1;flex-shrink:0;" />'
+                            if b64_c
+                            else ""
                         )
-                        st.markdown(
-                            f"**`{ref.get('codigo_sku', '')}` — {ref.get('nombre_producto', '')}**  \n"
-                            f"<span style='font-size:0.76rem;color:#64748b;'>"
-                            f"{origen_lbl} &bull; Guardada: {ref.get('fecha_aprendizaje', '')}"
-                            f"</span>",
-                            unsafe_allow_html=True,
+                        st.html(
+                            f"""
+                            <div style="display:flex;align-items:center;gap:0.5rem;padding:0.35rem;border:1px solid #e2e8f0;border-radius:6px;margin-bottom:0.35rem;background:#f8fafc;">
+                                {img_tag}
+                                <div style="font-size:0.75rem;line-height:1.25;">
+                                    <strong>{esc(ref_c.get("nombre_producto", ""))}</strong><br/>
+                                    <span style="color:#64748b;">{esc(ref_c.get("nombre_categoria", ""))}</span>
+                                </div>
+                            </div>
+                            """
                         )
-                    with cr_del:
-                        if st.button(
-                            "🗑️ Olvidar",
-                            key=f"del_mem_ref_{ref.get('id_referencia')}",
-                            width="stretch",
-                        ):
-                            eliminar_referencia_memoria_visual(int(ref["id_referencia"]))
-                            st.session_state["scanner_last_img_hash"] = None
-                            st.rerun()
 
         archivo_activo = foto_camara if foto_camara is not None else foto_archivo
 
         if archivo_activo is not None:
             bytes_img = archivo_activo.getvalue()
+            st.session_state["scanner_simulada_bytes"] = None
             st.session_state["scanner_last_img_bytes"] = bytes_img
             hash_actual = hashlib.md5(bytes_img).hexdigest()
 
             if hash_actual != st.session_state.get("scanner_last_img_hash"):
-                with st.spinner("🤖 Analizando objeto en pantalla (Memoria Visual + Lectura de Empaque OCR)..."):
+                with st.spinner("🤖 Analizando objeto en pantalla (Memoria Visual + Base Chilena + OCR)..."):
                     det = detectar_producto_en_imagen(
                         bytes_img,
                         api_key_gemini=st.session_state.get("cfg_apikey_ia", ""),
@@ -737,6 +821,9 @@ def render_bloque_escaner_camara(
                 st.session_state["scanner_last_img_hash"] = hash_actual
                 st.session_state["scanner_estado"] = "ESPERANDO_CONFIRMACION"
                 st.session_state["scanner_mensaje_exito"] = None
+        elif st.session_state.get("scanner_simulada_bytes") is not None:
+            bytes_img = st.session_state["scanner_simulada_bytes"]
+            st.session_state["scanner_last_img_bytes"] = bytes_img
         else:
             if st.session_state.get("scanner_estado") != "CONFIRMADO_INGRESAR_CANTIDAD":
                 st.session_state["scanner_estado"] = "SIN_CAPTURA"
@@ -750,7 +837,7 @@ def render_bloque_escaner_camara(
 
         if not det_actual or estado_scan == "SIN_CAPTURA":
             st.caption(
-                "👆 Captura una imagen con la cámara superior para que la IA identifique el producto."
+                "👆 Captura una imagen con la cámara superior (o elige una referencia chilena en el desplegable) para que la IA identifique el producto."
             )
             return
 
@@ -790,17 +877,17 @@ def render_bloque_escaner_camara(
         # ====================================================================
         elif estado_scan == "CORRIGIENDO_PRODUCTO":
             st.warning(
-                "🧠 **Enseñar a la IA (Corrección del Operario):** Indica cuál es realmente el producto que tienes en pantalla. "
-                "El sistema **guardará esta imagen en su Memoria Visual** para que la próxima vez lo reconozca automáticamente."
+                "🧠 **Enseñar a la IA (Corrección del Operario):** Indica cuál es realmente el producto en pantalla. "
+                "La imagen se guardará en tiempo real en la **Memoria Visual** para recordarlo siempre en futuros escaneos."
             )
             tipo_corr = st.radio(
-                "¿El objeto corresponde a un producto del catálogo o a uno nuevo?",
-                options=["EXISTENTE", "NUEVO"],
-                format_func=lambda t: (
-                    "📦 Es un producto que ya existe en el inventario"
-                    if t == "EXISTENTE"
-                    else "➕ Es un producto nuevo que no está en el catálogo"
-                ),
+                "¿Dónde quieres elegir el producto correcto?",
+                options=["EXISTENTE", "BASE_CHILENA", "NUEVO"],
+                format_func=lambda t: {
+                    "EXISTENTE": "📦 Producto actual de mi Inventario",
+                    "BASE_CHILENA": "🇨🇱 Elegir de la Base de Productos del Mercado Chileno (31 comunes)",
+                    "NUEVO": "➕ Escribir otro producto nuevo personalizado",
+                }[t],
                 horizontal=True,
                 key="scan_corr_tipo",
             )
@@ -812,7 +899,7 @@ def render_bloque_escaner_camara(
                     for p in inv_disp
                 }
                 id_elegido = st.selectbox(
-                    "Selecciona el producto correcto *",
+                    "Selecciona el producto correcto de tu inventario *",
                     options=list(mapa_corr.keys()),
                     format_func=lambda k: mapa_corr[k],
                     key="scan_corr_prod_id",
@@ -822,7 +909,7 @@ def render_bloque_escaner_camara(
                 c_ok, c_back = st.columns(2)
                 with c_ok:
                     if st.button(
-                        "🧠 Guardar Imagen en Memoria Visual y Pasar a Cantidad",
+                        "🧠 Guardar en Memoria Visual y Pasar a Cantidad",
                         type="primary",
                         width="stretch",
                         key="btn_guardar_corr_exist",
@@ -843,7 +930,7 @@ def render_bloque_escaner_camara(
                             "precio_venta_sugerido": prod_elegido["precio_venta"],
                             "perecible_sugerido": prod_elegido["perecible"],
                             "confianza_pct": 100,
-                            "descripcion_visual": "Aprendido y guardado en Memoria Visual por corrección del operario",
+                            "descripcion_visual": "Aprendido en tiempo real por corrección del operario",
                             "motor_vision": "🧠 Memoria Visual Aprendida",
                             "recordado_de_memoria": True,
                         }
@@ -864,6 +951,108 @@ def render_bloque_escaner_camara(
                     if st.button("↩️ Volver", width="stretch", key="btn_volver_corr_1"):
                         st.session_state["scanner_estado"] = "ESPERANDO_CONFIRMACION"
                         st.rerun()
+
+            elif tipo_corr == "BASE_CHILENA":
+                mapa_ch = {
+                    i: (
+                        f"🇨🇱 {item['marca']} — {item['nombre']} "
+                        f"({item['formato']} ×{item['upf']}u | Venta sug.: {moneda(item['venta'])})"
+                    )
+                    for i, item in enumerate(catalogo_chileno)
+                }
+                idx_ch_sel = st.selectbox(
+                    "Selecciona el producto común del mercado chileno *",
+                    options=list(mapa_ch.keys()),
+                    format_func=lambda k: mapa_ch[k],
+                    key="scan_corr_chileno_idx",
+                )
+                item_ch_sel = catalogo_chileno[idx_ch_sel]
+
+                c_ok_ch, c_back_ch = st.columns(2)
+                with c_ok_ch:
+                    if st.button(
+                        "🧠 Guardar Referencia Chilena en Memoria Visual y Pasar a Cantidad",
+                        type="primary",
+                        width="stretch",
+                        key="btn_guardar_corr_chileno",
+                    ):
+                        # Verificar si ya existe en el inventario activo
+                        match_inv = next(
+                            (
+                                p
+                                for p in inv_disp
+                                if (
+                                    item_ch_sel.get("sku_tienda")
+                                    and p["codigo_sku"].upper() == item_ch_sel["sku_tienda"].upper()
+                                )
+                                or p["nombre_producto"].strip().lower()
+                                == item_ch_sel["nombre"].strip().lower()
+                            ),
+                            None,
+                        )
+                        if match_inv is not None:
+                            nueva_det = {
+                                "es_existente": True,
+                                "id_producto": match_inv["id_producto"],
+                                "codigo_sku": match_inv["codigo_sku"],
+                                "nombre_detectado": match_inv["nombre_producto"],
+                                "nombre_categoria": match_inv["nombre_categoria"],
+                                "id_categoria": match_inv["id_categoria"],
+                                "stock_actual": match_inv["stock_actual"],
+                                "formato_sugerido": match_inv["formato_habitual"],
+                                "unidades_por_formato_sugeridas": match_inv["unidades_por_formato"],
+                                "peso_sugerido": match_inv["peso_unitario"],
+                                "unidad_peso_sugerida": match_inv["unidad_peso"],
+                                "precio_compra_sugerido": match_inv["precio_compra"],
+                                "precio_venta_sugerido": match_inv["precio_venta"],
+                                "perecible_sugerido": match_inv["perecible"],
+                                "confianza_pct": 100,
+                                "descripcion_visual": "Vinculado con Base del Mercado Chileno y aprendido en Memoria Visual",
+                                "motor_vision": "🧠 Memoria Visual Aprendida",
+                                "recordado_de_memoria": True,
+                            }
+                        else:
+                            nueva_det = {
+                                "es_existente": False,
+                                "id_producto": None,
+                                "codigo_sku": item_ch_sel["sku_ref"],
+                                "nombre_detectado": item_ch_sel["nombre"],
+                                "nombre_categoria": mapa_cat_form.get(
+                                    item_ch_sel["id_categoria"], "General"
+                                ),
+                                "id_categoria": item_ch_sel["id_categoria"],
+                                "stock_actual": 0,
+                                "formato_sugerido": item_ch_sel["formato"],
+                                "unidades_por_formato_sugeridas": item_ch_sel["upf"],
+                                "peso_sugerido": item_ch_sel["peso"],
+                                "unidad_peso_sugerida": item_ch_sel["unidad_peso"],
+                                "precio_compra_sugerido": item_ch_sel["compra"],
+                                "precio_venta_sugerido": item_ch_sel["venta"],
+                                "perecible_sugerido": item_ch_sel["perecible"],
+                                "confianza_pct": 100,
+                                "descripcion_visual": "Aprendido desde Base del Mercado Chileno por corrección del operario",
+                                "motor_vision": "🧠 Memoria Visual Aprendida",
+                                "recordado_de_memoria": True,
+                            }
+
+                        if img_bytes_guardados:
+                            guardar_referencia_memoria_visual(
+                                img_bytes_guardados,
+                                nueva_det,
+                                origen="CORRECCION_OPERARIO",
+                            )
+                            st.toast(
+                                f"¡Aprendido en tiempo real! La IA recordará «{nueva_det['nombre_detectado']}».",
+                                icon="🧠",
+                            )
+                        st.session_state["scanner_deteccion"] = nueva_det
+                        st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
+                        st.rerun()
+                with c_back_ch:
+                    if st.button("↩️ Volver", width="stretch", key="btn_volver_corr_ch"):
+                        st.session_state["scanner_estado"] = "ESPERANDO_CONFIRMACION"
+                        st.rerun()
+
             else:
                 cn1, cn2 = st.columns(2)
                 with cn1:
@@ -1111,7 +1300,11 @@ def render_bloque_escaner_camara(
                         st.session_state["scanner_deteccion"] = None
                         st.session_state["scanner_last_img_hash"] = None
                         st.session_state["scanner_last_img_bytes"] = None
-                        st.toast("Inventario actualizado desde el Escáner IA.", icon="📷")
+                        st.session_state["scanner_simulada_bytes"] = None
+                        st.session_state["scanner_cam_nonce"] = (
+                            st.session_state.get("scanner_cam_nonce", 0) + 1
+                        )
+                        st.toast("Inventario actualizado en tiempo real desde el Escáner IA.", icon="📷")
                         st.rerun()
                     except ErrorNegocio as err:
                         st.error(str(err))
@@ -1546,8 +1739,9 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     )
                     if st.button("Guardar Descuento en Caja e Inventario", key="btn_inv_oferta"):
                         r_of = aplicar_oferta_producto(idp_of, float(pct_nuevo))
-                        st.success(
-                            f"Actualizado: **{r_of['nombre_producto']}** ahora se vende a **{moneda(r_of['precio_oferta'])}** (-{r_of['descuento_oferta_pct']:g}%)."
+                        st.toast(
+                            f"Oferta guardada en tiempo real: {r_of['nombre_producto']} a {moneda(r_of['precio_oferta'])} (-{r_of['descuento_oferta_pct']:g}%).",
+                            icon="🏷️",
                         )
                         st.rerun()
 
@@ -1572,6 +1766,9 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
             render_bloque_escaner_camara(usuario, mapa_cat_form, mapa_prov_form)
 
             with st.container(border=True):
+                if st.session_state.get("flash_ingreso"):
+                    st.success(st.session_state["flash_ingreso"])
+
                 modo_operacion = st.radio(
                     "Tipo de Operación de Entrada",
                     options=["NUEVO_PRODUCTO", "ABASTECER_EXISTENTE"],
@@ -1802,10 +1999,15 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                                 codigo_lote=np_cod_lote,
                                 usuario=usuario,
                             )
-                            st.success(
-                                f"✅ Producto **{creado['nombre_producto']}** (`{creado['codigo_sku']}`) creado con "
+                            st.session_state["flash_ingreso"] = (
+                                f"✅ Producto **{creado['nombre_producto']}** (`{creado['codigo_sku']}`) creado en tiempo real con "
                                 f"**{creado['stock_actual']} unidades** en inventario."
                             )
+                            st.toast(
+                                f"Producto {creado['nombre_producto']} guardado en tiempo real.",
+                                icon="✅",
+                            )
+                            st.rerun()
                         except ErrorNegocio as err:
                             st.error(str(err))
 
@@ -1958,16 +2160,24 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                                 ),
                                 usuario=usuario,
                             )
-                            st.success(
-                                f"✅ Se sumaron **+{res_ab['unidades_ingresadas']} unidades** a **{res_ab['nombre_producto']}**. "
+                            st.session_state["flash_ingreso"] = (
+                                f"✅ Se sumaron **+{res_ab['unidades_ingresadas']} unidades** a **{res_ab['nombre_producto']}** en tiempo real. "
                                 f"Nuevo stock disponible: **{res_ab['stock_posterior']} uds**."
                             )
+                            st.toast(
+                                f"+{res_ab['unidades_ingresadas']} uds sumadas a {res_ab['nombre_producto']} en tiempo real.",
+                                icon="📦",
+                            )
+                            st.rerun()
                         except ErrorNegocio as err:
                             st.error(str(err))
 
         # --- COLUMNA DERECHA: REGISTRO DE PÉRDIDAS O BAJAS (MERMA) ---
         with col_merma_der:
             with st.container(border=True):
+                if st.session_state.get("flash_merma"):
+                    st.success(st.session_state["flash_merma"])
+
                 render_card_header(
                     "Registrar Pérdida o Baja (Merma)",
                     "Descuenta unidades vencidas, dañadas o faltantes auditando su costo",
@@ -2064,10 +2274,15 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                                 desactivar_producto=bool(m_baja),
                                 usuario=usuario,
                             )
-                            st.success(
-                                f"Pérdida auditada: **-{reg['cantidad']} uds** de *{reg['nombre_producto']}* "
+                            st.session_state["flash_merma"] = (
+                                f"✅ Pérdida auditada en tiempo real: **-{reg['cantidad']} uds** de *{reg['nombre_producto']}* "
                                 f"({moneda(reg['costo_estimado'])}). Stock restante: **{reg['stock_posterior']} uds**."
                             )
+                            st.toast(
+                                f"Merma de {reg['nombre_producto']} descontada en tiempo real.",
+                                icon="🚨",
+                            )
+                            st.rerun()
                         except ErrorNegocio as err:
                             st.error(str(err))
 
