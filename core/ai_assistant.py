@@ -140,7 +140,12 @@ def _consultar_pollinations_gratis(
                 .get("content", "")
                 .strip()
             )
-            if len(contenido) > 40:
+            if (
+                len(contenido) > 40
+                and "reached its budget" not in contenido.lower()
+                and "enter.pollinations.ai" not in contenido.lower()
+                and "api key" not in contenido.lower()
+            ):
                 return contenido
     except Exception:
         pass

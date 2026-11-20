@@ -807,14 +807,36 @@ def render_tarjeta_deteccion_ia(det: dict[str, Any]) -> None:
         if es_exist
         else "Producto nuevo detectado (se registrará en el catálogo)"
     )
-    conf = det.get("confianza_pct", 90)
+    conf = int(det.get("confianza_pct", 90) or 90)
     motor = det.get("motor_vision", "IA de Visión")
+    recordado = bool(det.get("recordado_de_memoria", False))
+
+    if recordado:
+        estilo_badge = "background-color:#15803d;"
+        texto_badge = f"🧠 RECONOCIDO POR MEMORIA VISUAL APRENDIDA ({conf}% coincidencia)"
+        nota_extra = (
+            "<div style='font-size:0.8rem;color:#15803d;font-weight:600;margin-top:0.35rem;'>"
+            "✨ La IA recordó este objeto gracias a una imagen de referencia confirmada previamente por el operario."
+            "</div>"
+        )
+    elif conf < 75:
+        estilo_badge = "background-color:#b45309;"
+        texto_badge = f"⚠️ IA NO ESTÁ 100% SEGURA ({conf}% confianza &bull; {esc(motor)})"
+        nota_extra = (
+            "<div style='font-size:0.8rem;color:#b45309;font-weight:600;margin-top:0.35rem;'>"
+            "💡 Si este no es el producto, presiona «No es este, corregir y guardar en Memoria Visual» para que la IA aprenda esta imagen."
+            "</div>"
+        )
+    else:
+        estilo_badge = "background-color:#6d28d9;"
+        texto_badge = f"🤖 IA DETECTÓ OBJETO ({conf}% confianza &bull; {esc(motor)})"
+        nota_extra = ""
 
     st.html(
         f"""
         <div class="scanner-detection-card">
-            <div class="scanner-badge-top">
-                🤖 IA DETECTÓ OBJETO ({conf}% confianza &bull; {esc(motor)})
+            <div class="scanner-badge-top" style="{estilo_badge}">
+                {texto_badge}
             </div>
             <div class="scanner-product-title">
                 <span class="mono">{esc(det.get("codigo_sku", ""))}</span> — {esc(det.get("nombre_detectado", ""))}
@@ -826,6 +848,7 @@ def render_tarjeta_deteccion_ia(det: dict[str, Any]) -> None:
             </div>
             <div class="scanner-operator-question">
                 ❓ Confirmación del Operario: ¿El producto capturado en pantalla es «{esc(det.get("nombre_detectado", ""))}»?
+                {nota_extra}
             </div>
         </div>
         """

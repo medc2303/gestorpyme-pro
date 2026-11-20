@@ -8,8 +8,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Datos temporales locales (la app genera datos semilla frescos automáticamente al iniciar)
-data/*.json
+# Datos temporales locales de inventario (la app genera datos semilla frescos automáticamente al iniciar)
+data/tienda_inventario.json
 data/*.tmp
 
 # Carpeta auxiliar de empaquetado local

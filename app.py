@@ -17,7 +17,13 @@ from typing import Any
 import streamlit as st
 
 from core.ai_assistant import generar_respuesta_asistente
-from core.vision_scanner import detectar_producto_en_imagen
+from core.vision_scanner import (
+    cargar_memoria_visual,
+    detectar_producto_en_imagen,
+    eliminar_referencia_memoria_visual,
+    guardar_referencia_memoria_visual,
+    vincular_producto_creado_en_memoria,
+)
 from core.store import (
     ErrorNegocio,
     aplicar_oferta_producto,
@@ -670,14 +676,59 @@ def render_bloque_escaner_camara(
                 key="widget_archivo_ia",
             )
 
+        referencias_mem = cargar_memoria_visual()
+        with st.expander(
+            f"🧠 Memoria Visual Aprendida por la IA ({len(referencias_mem)} imagen(es) de referencia guardadas)"
+        ):
+            if not referencias_mem:
+                st.caption(
+                    "Aún no hay imágenes guardadas en la Memoria Visual. Cuando corrijas o confirmes un producto escaneado, la IA guardará su imagen aquí para recordarlo en el futuro."
+                )
+            else:
+                st.caption(
+                    "Estas imágenes fueron confirmadas o corregidas por el operario. Si vuelves a enfocar cualquiera de estos objetos, la IA lo reconocerá automáticamente:"
+                )
+                for ref in referencias_mem[:8]:
+                    cr_img, cr_info, cr_del = st.columns([0.65, 2.5, 0.7])
+                    with cr_img:
+                        b64_t = ref.get("huella", {}).get("miniatura_b64", "")
+                        if b64_t:
+                            st.html(
+                                f'<img src="data:image/jpeg;base64,{b64_t}" '
+                                f'style="width:72px;height:52px;object-fit:cover;border-radius:6px;border:1px solid #cbd5e1;" />'
+                            )
+                    with cr_info:
+                        origen_lbl = (
+                            "Enseñada por corrección del operario"
+                            if ref.get("origen") == "CORRECCION_OPERARIO"
+                            else "Confirmada por operario"
+                        )
+                        st.markdown(
+                            f"**`{ref.get('codigo_sku', '')}` — {ref.get('nombre_producto', '')}**  \n"
+                            f"<span style='font-size:0.76rem;color:#64748b;'>"
+                            f"{origen_lbl} &bull; Guardada: {ref.get('fecha_aprendizaje', '')}"
+                            f"</span>",
+                            unsafe_allow_html=True,
+                        )
+                    with cr_del:
+                        if st.button(
+                            "🗑️ Olvidar",
+                            key=f"del_mem_ref_{ref.get('id_referencia')}",
+                            width="stretch",
+                        ):
+                            eliminar_referencia_memoria_visual(int(ref["id_referencia"]))
+                            st.session_state["scanner_last_img_hash"] = None
+                            st.rerun()
+
         archivo_activo = foto_camara if foto_camara is not None else foto_archivo
 
         if archivo_activo is not None:
             bytes_img = archivo_activo.getvalue()
+            st.session_state["scanner_last_img_bytes"] = bytes_img
             hash_actual = hashlib.md5(bytes_img).hexdigest()
 
             if hash_actual != st.session_state.get("scanner_last_img_hash"):
-                with st.spinner("🤖 Analizando objeto en pantalla con IA de Visión..."):
+                with st.spinner("🤖 Analizando objeto en pantalla (Memoria Visual + Lectura de Empaque OCR)..."):
                     det = detectar_producto_en_imagen(
                         bytes_img,
                         api_key_gemini=st.session_state.get("cfg_apikey_ia", ""),
@@ -691,9 +742,11 @@ def render_bloque_escaner_camara(
                 st.session_state["scanner_estado"] = "SIN_CAPTURA"
                 st.session_state["scanner_deteccion"] = None
                 st.session_state["scanner_last_img_hash"] = None
+                st.session_state["scanner_last_img_bytes"] = None
 
         det_actual = st.session_state.get("scanner_deteccion")
         estado_scan = st.session_state.get("scanner_estado", "SIN_CAPTURA")
+        img_bytes_guardados = st.session_state.get("scanner_last_img_bytes")
 
         if not det_actual or estado_scan == "SIN_CAPTURA":
             st.caption(
@@ -715,11 +768,17 @@ def render_bloque_escaner_camara(
                     width="stretch",
                     key="btn_operario_confirma_si",
                 ):
+                    if img_bytes_guardados:
+                        guardar_referencia_memoria_visual(
+                            img_bytes_guardados,
+                            det_actual,
+                            origen="CONFIRMACION_OPERARIO",
+                        )
                     st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
                     st.rerun()
             with b_no:
                 if st.button(
-                    "🔄 No es este, elegir / corregir producto",
+                    "🔄 No es este, corregir y guardar en Memoria Visual",
                     width="stretch",
                     key="btn_operario_confirma_no",
                 ):
@@ -727,11 +786,12 @@ def render_bloque_escaner_camara(
                     st.rerun()
 
         # ====================================================================
-        # PASO 2B: CORRECCIÓN MANUAL SI LA IA NO ACERTÓ EL PRODUCTO
+        # PASO 2B: CORRECCIÓN MANUAL Y APRENDIZAJE EN MEMORIA VISUAL
         # ====================================================================
         elif estado_scan == "CORRIGIENDO_PRODUCTO":
             st.warning(
-                "🔧 **Corrección del Operario:** Indica cuál es realmente el producto que tienes frente a la cámara."
+                "🧠 **Enseñar a la IA (Corrección del Operario):** Indica cuál es realmente el producto que tienes en pantalla. "
+                "El sistema **guardará esta imagen en su Memoria Visual** para que la próxima vez lo reconozca automáticamente."
             )
             tipo_corr = st.radio(
                 "¿El objeto corresponde a un producto del catálogo o a uno nuevo?",
@@ -762,12 +822,12 @@ def render_bloque_escaner_camara(
                 c_ok, c_back = st.columns(2)
                 with c_ok:
                     if st.button(
-                        "✅ Confirmar este producto y pasar a cantidad",
+                        "🧠 Guardar Imagen en Memoria Visual y Pasar a Cantidad",
                         type="primary",
                         width="stretch",
                         key="btn_guardar_corr_exist",
                     ):
-                        st.session_state["scanner_deteccion"] = {
+                        nueva_det = {
                             "es_existente": True,
                             "id_producto": prod_elegido["id_producto"],
                             "codigo_sku": prod_elegido["codigo_sku"],
@@ -783,9 +843,21 @@ def render_bloque_escaner_camara(
                             "precio_venta_sugerido": prod_elegido["precio_venta"],
                             "perecible_sugerido": prod_elegido["perecible"],
                             "confianza_pct": 100,
-                            "descripcion_visual": "Seleccionado y confirmado por el operario",
-                            "motor_vision": "Confirmación Manual Operario",
+                            "descripcion_visual": "Aprendido y guardado en Memoria Visual por corrección del operario",
+                            "motor_vision": "🧠 Memoria Visual Aprendida",
+                            "recordado_de_memoria": True,
                         }
+                        if img_bytes_guardados:
+                            guardar_referencia_memoria_visual(
+                                img_bytes_guardados,
+                                nueva_det,
+                                origen="CORRECCION_OPERARIO",
+                            )
+                            st.toast(
+                                f"¡Imagen aprendida! La IA recordará «{prod_elegido['nombre_producto']}» en futuros escaneos.",
+                                icon="🧠",
+                            )
+                        st.session_state["scanner_deteccion"] = nueva_det
                         st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
                         st.rerun()
                 with c_back:
@@ -798,6 +870,7 @@ def render_bloque_escaner_camara(
                     corr_nombre = st.text_input(
                         "Nombre real del producto *",
                         value=det_actual.get("nombre_detectado", ""),
+                        placeholder="Ej: Galletas McKay Kuky ChipChipers Blanco 120g",
                         key="scan_corr_nuevo_nom",
                     )
                 with cn2:
@@ -810,7 +883,7 @@ def render_bloque_escaner_camara(
                 c_ok2, c_back2 = st.columns(2)
                 with c_ok2:
                     if st.button(
-                        "✅ Confirmar nuevo producto y pasar a cantidad",
+                        "🧠 Guardar Nuevo Producto en Memoria Visual y Pasar a Cantidad",
                         type="primary",
                         width="stretch",
                         key="btn_guardar_corr_nuevo",
@@ -822,6 +895,23 @@ def render_bloque_escaner_camara(
                         det_actual["nombre_detectado"] = corr_nombre.strip() or "Producto Escaneado"
                         det_actual["id_categoria"] = int(corr_cat)
                         det_actual["nombre_categoria"] = mapa_cat_form[corr_cat]
+                        det_actual["confianza_pct"] = 100
+                        det_actual["descripcion_visual"] = (
+                            "Aprendido y guardado en Memoria Visual por corrección del operario"
+                        )
+                        det_actual["motor_vision"] = "🧠 Memoria Visual Aprendida"
+                        det_actual["recordado_de_memoria"] = True
+
+                        if img_bytes_guardados:
+                            guardar_referencia_memoria_visual(
+                                img_bytes_guardados,
+                                det_actual,
+                                origen="CORRECCION_OPERARIO",
+                            )
+                            st.toast(
+                                f"¡Imagen aprendida! La IA recordará «{det_actual['nombre_detectado']}» en futuros escaneos.",
+                                icon="🧠",
+                            )
                         st.session_state["scanner_deteccion"] = det_actual
                         st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
                         st.rerun()
@@ -1009,14 +1099,18 @@ def render_bloque_escaner_camara(
                                 fecha_caducidad=fecha_cad_str,
                                 usuario=usuario,
                             )
+                            vincular_producto_creado_en_memoria(
+                                creado["nombre_producto"], creado
+                            )
                             st.session_state["scanner_mensaje_exito"] = (
-                                f"✅ **Nuevo producto creado por Escáner IA:** **{creado['nombre_producto']}** "
+                                f"✅ **Nuevo producto creado y aprendido por Escáner IA:** **{creado['nombre_producto']}** "
                                 f"(`{creado['codigo_sku']}`) ingresado con **{creado['stock_actual']} unidades**."
                             )
 
                         st.session_state["scanner_estado"] = "SIN_CAPTURA"
                         st.session_state["scanner_deteccion"] = None
                         st.session_state["scanner_last_img_hash"] = None
+                        st.session_state["scanner_last_img_bytes"] = None
                         st.toast("Inventario actualizado desde el Escáner IA.", icon="📷")
                         st.rerun()
                     except ErrorNegocio as err:
