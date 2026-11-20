@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime
+import re
+import unicodedata
 from difflib import SequenceMatcher
 import io
 import json
@@ -406,8 +408,63 @@ def _calcular_descriptores_color(
     return grid_list, hist_list, perfil_list
 
 
+_OCTOGONOS_Y_RUIDO = {
+    "alto", "altoen", "altoln", "alioen", "alioe", "altoenazucares",
+    "azucares", "grasas", "saturadas", "calorias", "sodio", "ministerio",
+    "salud", "cont", "neto", "contneto", "exceso", "etiqueta", "imagen",
+    "referencial", "clear", "photo", "take", "clearphoto", "takephoto",
+    "con", "por", "para", "del", "las", "los", "una", "uno",
+}
+
+_PALABRAS_GENERICAS_MARCA = {
+    "mckay", "costa", "nestle", "soprole", "colun", "carozzi", "lucchetti",
+    "loncoleche", "watt", "watts", "andina", "coca", "cola", "galletas",
+    "galleta", "bebida", "jugo", "leche", "yogurt", "sabor", "sin", "con",
+    "relleno", "chocolate", "packs", "pack", "caja", "unidad", "unidades",
+}
+
+_ALIAS_OCR = {
+    "mkay": "mckay",
+    "mckai": "mckay",
+    "poweryyade": "powerade",
+    "poweryade": "powerade",
+    "cocacola": "coca cola",
+    "saborvainilla": "sabor vainilla",
+    "saborchocolate": "sabor chocolate",
+    "sabornaranja": "sabor naranja",
+    "saborfrutilla": "sabor frutilla",
+    "zeroazucar": "zero azucar",
+    "sinazucar": "sin azucar",
+    "chipchipers": "kuky",
+}
+
+_SUBPALABRAS_SEPARABLES = (
+    "vainilla", "chocolate", "naranja", "frutilla", "limon", "blanco",
+    "negro", "zero", "original", "triton", "kuky", "morocha", "tuareg",
+    "powerade", "gatorade", "coca", "cola", "azucar", "sabor",
+)
+
+
+def _limpiar_sin_tildes(texto: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", texto.lower())
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _es_ruido_octogono(frase: str) -> bool:
+    partes = [re.sub(r"[^a-z0-9]+", "", _limpiar_sin_tildes(p)) for p in re.split(r"[\s\-\.,/]+", frase)]
+    partes = [p for p in partes if len(p) >= 2]
+    if not partes:
+        return True
+    if all(p in _OCTOGONOS_Y_RUIDO or p.isdigit() for p in partes):
+        return True
+    # Filtrar códigos corruptos largos tipo 'de116gclttaconielinosaonv'
+    if len(partes) == 1 and len(partes[0]) >= 18 and sum(c.isdigit() for c in partes[0]) >= 2:
+        return True
+    return False
+
+
 def _extraer_texto_ocr(img_recortada: Image.Image) -> list[str]:
-    """Ejecuta RapidOCR en doble pasada con realce de contraste."""
+    """Ejecuta RapidOCR en doble pasada filtrando octógonos nutricionales chilenos."""
     motor = _obtener_motor_ocr()
     if motor is None:
         return []
@@ -432,7 +489,6 @@ def _extraer_texto_ocr(img_recortada: Image.Image) -> list[str]:
         except Exception:
             pass
 
-        ignorar = {"clear photo", "clearphoto", "take photo", "takephoto"}
         textos: list[str] = []
         vistos_low: set[str] = set()
 
@@ -447,11 +503,11 @@ def _extraer_texto_ocr(img_recortada: Image.Image) -> list[str]:
                 limpio = re.sub(
                     r"[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\.\-% ]+", "", txt
                 ).strip()
-                low = limpio.lower()
+                low = _limpiar_sin_tildes(limpio)
                 if (
                     len(limpio) >= 2
                     and conf >= 0.42
-                    and low not in ignorar
+                    and not _es_ruido_octogono(limpio)
                     and low not in vistos_low
                 ):
                     vistos_low.add(low)
@@ -598,18 +654,31 @@ def _similitud_hamming_hex(h1: str, h2: str) -> float:
 
 def _tokenizar_ocr(textos: list[str], reconstruir_pares: bool = False) -> list[str]:
     """
-    Convierte textos leídos por OCR en tokens limpios.
-    Si `reconstruir_pares=True` (para lecturas de cámara en botellas o envases curvos),
-    une además fragmentos adyacentes y elimina letras duplicadas por distorsión óptica
-    (ej. ['POWER', 'YYADE'] -> genera también 'poweryyade' y 'poweryade' -> coincide con 'powerade').
+    Convierte TODOS los textos leídos por OCR en tokens limpios sin tildes,
+    filtrando octógonos nutricionales, normalizando alias OCR ('mkay' -> 'mckay')
+    y separando palabras pegadas ('saborvainilla' -> 'sabor', 'vainilla').
     """
-    stopwords = {"clear", "photo", "take", "con", "por", "para", "del", "las", "los"}
     tokens_base: list[str] = []
+
+    def _agregar_token(tk: str) -> None:
+        if len(tk) >= 3 and tk not in _OCTOGONOS_Y_RUIDO and not tk.isdigit() and tk not in tokens_base:
+            tokens_base.append(tk)
+
     for frase in textos:
-        for t in re.split(r"[\s\-\.,/]+", frase.lower()):
-            limpio = re.sub(r"[^a-záéíóúüñ0-9]+", "", t)
-            if len(limpio) >= 3 and limpio not in stopwords and limpio not in tokens_base:
-                tokens_base.append(limpio)
+        frase_norm = _limpiar_sin_tildes(str(frase))
+        for t in re.split(r"[\s\-\.,/]+", frase_norm):
+            limpio = re.sub(r"[^a-z0-9]+", "", t)
+            if not limpio:
+                continue
+            if limpio in _ALIAS_OCR:
+                for parte in _ALIAS_OCR[limpio].split():
+                    _agregar_token(parte)
+            else:
+                _agregar_token(limpio)
+                if len(limpio) >= 7:
+                    for sub in _SUBPALABRAS_SEPARABLES:
+                        if sub in limpio and sub != limpio:
+                            _agregar_token(sub)
 
     if not reconstruir_pares or len(tokens_base) < 2:
         return tokens_base
@@ -619,7 +688,6 @@ def _tokenizar_ocr(textos: list[str], reconstruir_pares: bool = False) -> list[s
         unido = tokens_base[i] + tokens_base[i + 1]
         if 5 <= len(unido) <= 18 and unido not in tokens_expandidos:
             tokens_expandidos.append(unido)
-        # Versión sin letras duplicadas consecutivas (ej. "poweryyade" -> "poweryade")
         colapsado = re.sub(r"(.)\1+", r"\1", unido)
         if 5 <= len(colapsado) <= 18 and colapsado not in tokens_expandidos:
             tokens_expandidos.append(colapsado)
@@ -658,20 +726,64 @@ def calcular_similitud_solo_imagen(
     return round(min(99.5, max(0.0, puntaje)), 1)
 
 
+_DESCRIPTORES_SABOR = {
+    "vainilla", "chocolate", "naranja", "frutilla", "limon", "blanco", "blanca",
+    "negro", "negra", "rojo", "roja", "azul", "verde", "amarillo", "amarilla",
+    "sandwich", "original", "clasico", "clasica", "integral", "zero",
+    "light", "chips", "chip", "relleno", "crema", "leche", "manjar",
+    "caramelo", "menta", "uva", "pina", "durazno", "manzana", "mango",
+    "natural", "suave", "especial", "familiar", "premium", "extra",
+}
+
+
+def _obtener_tokens_distintivos_catalogo() -> set[str]:
+    """Tokens primarios de línea de producto (claves[0] de cada producto chileno)."""
+    distintivos: set[str] = set()
+    for item in CATALOGO_CHILENO_PRECARGADO:
+        claves = item.get("claves", [])
+        if not claves:
+            continue
+        tk = re.sub(r"[^a-z0-9]+", "", _limpiar_sin_tildes(str(claves[0])))
+        if (
+            len(tk) >= 4
+            and tk not in _PALABRAS_GENERICAS_MARCA
+            and tk not in _OCTOGONOS_Y_RUIDO
+            and tk not in _DESCRIPTORES_SABOR
+        ):
+            distintivos.add(tk)
+    return distintivos
+
+
+_TOKENS_DISTINTIVOS_CATALOGO = _obtener_tokens_distintivos_catalogo()
+
+
 def calcular_similitud_solo_texto(
     tokens_captura: list[str], tokens_candidato: list[str]
 ) -> tuple[float, list[str]]:
     """
-    Evalúa cuánto coincide el texto OCR leído en la cámara (incluyendo palabras
-    reconstruidas de fragmentos curvos) con las palabras clave del producto candidato.
+    Evalúa TODO el texto OCR leído en cámara frente al candidato:
+      - Prioriza tokens distintivos de producto (ej. 'triton', 'kuky', 'zero', 'powerade')
+        por sobre marcas o categorías genéricas ('mckay', 'galletas').
+      - Penaliza fuertemente si el OCR leyó un nombre distintivo de producto (ej. 'triton')
+        que NO pertenece al candidato (ej. 'kuky').
     """
     if not tokens_captura or not tokens_candidato:
         return 0.0, []
 
     coincidentes: list[str] = []
     puntaje_acum = 0.0
+    distintivos_en_captura: list[str] = []
+    distintivos_coincidentes = 0
 
     for tk_cap in tokens_captura:
+        es_distintivo_cap = (
+            tk_cap in _TOKENS_DISTINTIVOS_CATALOGO
+            and tk_cap not in _PALABRAS_GENERICAS_MARCA
+            and not any(c.isdigit() for c in tk_cap)
+        )
+        if es_distintivo_cap:
+            distintivos_en_captura.append(tk_cap)
+
         mejor_ratio = 0.0
         for tk_ref in tokens_candidato:
             if tk_cap == tk_ref:
@@ -684,14 +796,25 @@ def calcular_similitud_solo_texto(
                 if r > mejor_ratio:
                     mejor_ratio = r
 
-        if mejor_ratio >= 0.75:
-            puntaje_acum += mejor_ratio
+        if mejor_ratio >= 0.78:
+            peso = 0.35 if tk_cap in _PALABRAS_GENERICAS_MARCA else (1.7 if es_distintivo_cap else 1.0)
+            puntaje_acum += mejor_ratio * peso
             coincidentes.append(tk_cap)
+            if es_distintivo_cap:
+                distintivos_coincidentes += 1
 
     if not coincidentes:
         return 0.0, []
 
-    base = 68.0 + min(31.0, (puntaje_acum - 0.75) * 22.0 + (len(coincidentes) - 1) * 9.0)
+    # Penalizar si el OCR leyó un producto distintivo específico y el candidato no lo tiene
+    if distintivos_en_captura and distintivos_coincidentes == 0:
+        return 18.0, coincidentes
+
+    base = 62.0 + min(37.0, puntaje_acum * 14.5 + distintivos_coincidentes * 6.0)
+    if distintivos_en_captura and distintivos_coincidentes < len(distintivos_en_captura):
+        faltantes = len(distintivos_en_captura) - distintivos_coincidentes
+        base = max(45.0, base - faltantes * 10.0)
+
     return round(min(99.0, max(0.0, base)), 1), coincidentes
 
 
@@ -1165,11 +1288,13 @@ def detectar_producto_en_imagen(
             huella_captura, ref, hay_texto_en_captura=hay_texto
         )
         score_comp = ev["score_cruzado"]
+        # Solo usar la corrección previa del operario como desempate leve si no hay texto distinto
         if (
             ref.get("origen") != "BASE_CHILENA_PRECARGADA"
             and ev["modo_cruce"] != "VETADO_POR_TEXTO_DISTINTO"
+            and (not hay_texto or ev["sim_texto"] >= 70.0)
         ):
-            score_comp += 1.5
+            score_comp += 0.5
 
         if score_comp > mejor_eval["score_cruzado"]:
             mejor_eval = {**ev, "score_cruzado": min(99.5, round(score_comp, 1))}

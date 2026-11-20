@@ -203,12 +203,12 @@ def vista_login() -> None:
 
         st.html(
             """
-            <div class="card" style="margin-top:0.9rem;padding:1rem 1.2rem;">
-                <div style="font-size:0.82rem;color:#475569;line-height:1.55;">
-                    <strong>✨ Propuesta de Valor MVP PyME:</strong><br/>
+            <div class="card" style="margin-top:0.9rem;padding:1rem 1.2rem;border-left:4px solid #1d4ed8;">
+                <div style="font-size:0.83rem;color:#475569;line-height:1.6;">
+                    <strong style="color:#0f172a;">GestorPyME Pro &bull; Plataforma Operativa</strong><br/>
                     &bull; <strong>Conversión automática:</strong> Ingresa por Caja o Lote y controla en Unidades.<br/>
-                    &bull; <strong>Cero mermas por descuido:</strong> Alertas tempranas de caducidad y despacho FEFO.<br/>
-                    &bull; <strong>Asesor Comercial IA:</strong> Recomendaciones gratuitas de compras y ofertas.
+                    &bull; <strong>Control FEFO:</strong> Alertas tempranas de caducidad y mermas valorizadas.<br/>
+                    &bull; <strong>Visión IA + Asesor:</strong> Escaneo con cámara, lectura OCR y sugerencias de reposición.
                 </div>
             </div>
             """
@@ -661,9 +661,9 @@ def render_bloque_escaner_camara(
         h_izq, h_der = st.columns([2.2, 0.9])
         with h_izq:
             render_card_header(
-                "📷 Escaneo de Objeto con Cámara e IA",
-                "Paso 1: Toma la foto del producto -> Paso 2: Confirma detección IA -> Paso 3: Ingresa Lote, Caja o Unidades",
-                "Visión IA Activa",
+                "📷 Escáner Inteligente con Cámara e IA",
+                "1. Captura el producto  •  2. Confirma la detección  •  3. Ingresa Lote, Caja o Unidades",
+                "Visión IA + OCR",
                 "module-pill-purple",
             )
         with h_der:

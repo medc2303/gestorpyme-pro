@@ -812,26 +812,33 @@ def render_tarjeta_deteccion_ia(det: dict[str, Any]) -> None:
     recordado = bool(det.get("recordado_de_memoria", False))
     incoherente = bool(det.get("es_incoherente", False))
 
-    if recordado:
+    if recordado and "Memoria Visual" in str(motor):
         estilo_badge = "background-color:#15803d;"
-        texto_badge = f"🧠 RECONOCIDO POR MEMORIA VISUAL APRENDIDA ({conf}% coincidencia)"
+        texto_badge = f"🧠 MEMORIA VISUAL DEL OPERARIO ({conf}% coincidencia)"
         nota_extra = (
             "<div style='font-size:0.8rem;color:#15803d;font-weight:600;margin-top:0.35rem;'>"
-            "✨ La IA recordó este objeto gracias a una imagen de referencia confirmada previamente por el operario."
+            "✨ Coincide con una referencia confirmada previamente por el operario."
+            "</div>"
+        )
+    elif recordado:
+        estilo_badge = "background-color:#0f766e;"
+        texto_badge = f"🇨🇱 VALIDADO EN BASE CHILENA + OCR ({conf}% coincidencia)"
+        nota_extra = (
+            "<div style='font-size:0.8rem;color:#0f766e;font-weight:600;margin-top:0.35rem;'>"
+            "✓ Validación cruzada entre el texto completo del envase y la imagen de referencia."
             "</div>"
         )
     elif incoherente or conf < 72:
         estilo_badge = "background-color:#b45309;"
-        texto_badge = f"⚠️ POSIBLE INCOHERENCIA / BAJA CERTEZA ({conf}% &bull; Respaldo Base Chilena)"
+        texto_badge = f"⚠️ BAJA CERTEZA ({conf}% &bull; Sugerencia Base Chilena)"
         nota_extra = (
             "<div style='font-size:0.8rem;color:#b45309;font-weight:600;margin-top:0.35rem;'>"
-            "💡 En caso de captura dudosa o incoherente se muestra la referencia chilena más cercana. "
-            "Presiona «No es este, corregir y guardar en Memoria Visual» para enseñarle el producto exacto."
+            "💡 Si no corresponde, presiona «No es este, elegir / corregir producto» para enseñarle a la IA."
             "</div>"
         )
     else:
         estilo_badge = "background-color:#6d28d9;"
-        texto_badge = f"🤖 IA DETECTÓ OBJETO ({conf}% confianza &bull; {esc(motor)})"
+        texto_badge = f"🤖 DETECCIÓN IA ({conf}% confianza &bull; {esc(motor)})"
         nota_extra = ""
 
     st.html(
