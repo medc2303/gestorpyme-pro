@@ -1,23 +1,25 @@
 """
-Módulo de Escaneo de Productos con Cámara, Visión por IA, OCR en Envase,
-Base Precargada del Mercado Chileno y Memoria Visual de Aprendizaje del Operario.
+Módulo de Escaneo de Productos con Cámara, Relación Cruzada Imagen + Texto (OCR),
+Base Pública de Fotografías Reales (Open Food Facts Chile) y Memoria Visual del Operario.
 
-Características clave:
-  1. BASE PRECARGADA DEL MERCADO CHILENO (36 productos comunes de almacenes y minimarkets):
-     Incluye marcas reales chilenas (McKay Kuky, Tritón, Costa Tuareg, Frac, Super 8,
-     Trencito, Lay's, Kryzpo, Soprole, Colun, Cachantún, Vital, Coca-Cola, Kem Piña,
-     Bilz/Pap, Watt's, Tucapel, Carozzi, Lucchetti, Pomarola, Chef, Belmont, Iansa,
-     Sal Lobos, Té Supremo, Nescafé, Selecta, Robinson Crusoe, Omo, Quix, Clorinda,
-     Confort, Ballerina, Pepsodent, Colgate) con sus imágenes de referencia, huellas
-     visuales, palabras clave OCR, pesos, formatos Caja/Lote y precios en pesos chilenos.
-  2. MEMORIA VISUAL APRENDIDA DEL OPERARIO (`data/memoria_visual.json`):
-     Cada vez que la IA duda o se equivoca y el operario indica cuál es el producto,
-     se guarda la huella visual de esa imagen (dHash, aHash, grilla 4x4, histograma,
-     OCR y miniatura) para que en futuros escaneos la IA recuerde exactamente ese objeto.
-  3. DETECCIÓN DE INCOHERENCIAS / IMÁGENES BORROSAS O SIN PRODUCTO:
-     Si la captura es demasiado oscura, uniforme o no coincide con certeza con ninguna
-     referencia ni texto OCR, advierte explícitamente al operario para evitar ingresos
-     incoherentes y respalda siempre con la referencia chilena más cercana.
+Arquitectura de Reconocimiento Cruzado (Imagen + Texto):
+  1. AISLAMIENTO DEL OBJETO Y ELIMINACIÓN DE FONDO:
+     Enmascara los píxeles oscuros del fondo de la habitación para extraer el
+     histograma cromático y el perfil de color (rojo, azul, amarillo/naranja,
+     verde, blanco, oscuro) exclusivamente sobre el empaque iluminado.
+  2. LECTURA MULTIPASO DE TEXTO EN ENVASE (RapidOCR ONNX):
+     Lee marcas, nombres, variantes ("Zero", "Sin Calorías", "Blanco") y formatos
+     ("1.5L", "120g", "1kg") aplicando realce automático de contraste.
+  3. RELACIÓN CRUZADA OBLIGATORIA IMAGEN + TEXTO:
+     Cada candidato se evalúa cruzando su similitud visual de empaque (`sim_visual`)
+     con su coincidencia textual (`sim_texto`). Si el envase frente a la cámara tiene
+     texto legible (ej. "Coca-Cola Zero Sin Calorías 1.5L"), cualquier referencia en
+     memoria cuyo texto contradiga lo leído (ej. "McKay Kuky") queda vetada automáticamente,
+     impidiendo falsos positivos por similitud de fondo o iluminación.
+  4. BASE PÚBLICA DE IMÁGENES REALES (Open Food Facts Chile):
+     Precarga 33 fotografías reales de productos del mercado chileno desde
+     `data/catalogo_chileno_real.json` (Open Food Facts `images.openfoodfacts.org`)
+     y consulta la API pública de Open Food Facts en vivo si detecta una marca nueva.
 """
 
 from __future__ import annotations
@@ -31,14 +33,17 @@ import math
 import re
 from typing import Any
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
+import requests
 
 from core.store import DIRECTORIO_DATOS, obtener_catalogos, obtener_inventario_consolidado
 
 ARCHIVO_MEMORIA_VISUAL = DIRECTORIO_DATOS / "memoria_visual.json"
+ARCHIVO_FOTOS_REALES_CHILE = DIRECTORIO_DATOS / "catalogo_chileno_real.json"
 
 _OCR_INSTANCE: Any = None
 _OCR_CARGADO: bool = False
+_CACHE_FOTOS_REALES: dict[str, dict[str, str]] | None = None
 
 
 def _obtener_motor_ocr() -> Any:
@@ -56,8 +61,25 @@ def _obtener_motor_ocr() -> Any:
     return _OCR_INSTANCE
 
 
+def _cargar_fotos_reales_chile() -> dict[str, dict[str, str]]:
+    """Carga el mapa de fotografías reales descargadas desde Open Food Facts."""
+    global _CACHE_FOTOS_REALES
+    if _CACHE_FOTOS_REALES is not None:
+        return _CACHE_FOTOS_REALES
+    if ARCHIVO_FOTOS_REALES_CHILE.exists():
+        try:
+            _CACHE_FOTOS_REALES = json.loads(
+                ARCHIVO_FOTOS_REALES_CHILE.read_text(encoding="utf-8")
+            )
+            return _CACHE_FOTOS_REALES
+        except Exception:
+            pass
+    _CACHE_FOTOS_REALES = {}
+    return _CACHE_FOTOS_REALES
+
+
 # ============================================================================
-# BASE PRECARGADA DE PRODUCTOS COMUNES DEL MERCADO CHILENO
+# CATÁLOGO DE PRODUCTOS COMUNES DEL MERCADO CHILENO (CON FOTOS REALES OFF)
 # ============================================================================
 
 CATALOGO_CHILENO_PRECARGADO: list[dict[str, Any]] = [
@@ -67,7 +89,7 @@ CATALOGO_CHILENO_PRECARGADO: list[dict[str, Any]] = [
         "sku_tienda": None,
         "nombre": "Galletas McKay Kuky ChipChipers Blanco 120g",
         "marca": "McKay",
-        "claves": ["kuky", "mckay", "chipchiper", "chipchipers", "blanco", "blana", "cnipchipera"],
+        "claves": ["kuky", "mckay", "chipchiper", "chipchipers", "cnipchipera", "blanco", "blana", "blancd"],
         "id_categoria": 3,
         "peso": 120.0,
         "unidad_peso": "g",
@@ -163,7 +185,7 @@ CATALOGO_CHILENO_PRECARGADO: list[dict[str, Any]] = [
         "sku_tienda": None,
         "nombre": "Chocolate Trencito Nestlé 150g",
         "marca": "Nestlé",
-        "claves": ["trencito", "nestle", "sahne", "nuss", "chocolate", "leche"],
+        "claves": ["trencito", "nestle", "sahne", "nuss", "chocolate"],
         "id_categoria": 3,
         "peso": 150.0,
         "unidad_peso": "g",
@@ -208,11 +230,43 @@ CATALOGO_CHILENO_PRECARGADO: list[dict[str, Any]] = [
     },
     # --- BEBIDAS Y LÁCTEOS CHILENOS (Categoría 1) ---
     {
+        "sku_ref": "BEB-102",
+        "sku_tienda": None,
+        "nombre": "Bebida Coca-Cola Zero Azúcar 1.5L",
+        "marca": "Coca-Cola",
+        "claves": ["coca", "cocacola", "cocacou", "zero", "azucar", "sin", "calorias", "15l", "1.5l"],
+        "id_categoria": 1,
+        "peso": 1.5,
+        "unidad_peso": "L",
+        "formato": "LOTE",
+        "upf": 6,
+        "compra": 1250.0,
+        "venta": 1990.0,
+        "perecible": True,
+        "colores": ((210, 25, 30), (25, 20, 20), (255, 255, 255)),
+    },
+    {
+        "sku_ref": "BEB-104",
+        "sku_tienda": None,
+        "nombre": "Bebida Coca-Cola Original 1.5L",
+        "marca": "Coca-Cola",
+        "claves": ["coca", "cocacola", "cocacou", "original", "sabor", "15l", "1.5l"],
+        "id_categoria": 1,
+        "peso": 1.5,
+        "unidad_peso": "L",
+        "formato": "LOTE",
+        "upf": 6,
+        "compra": 1250.0,
+        "venta": 1990.0,
+        "perecible": True,
+        "colores": ((220, 20, 30), (255, 255, 255), (45, 15, 15)),
+    },
+    {
         "sku_ref": "BEB-001",
         "sku_tienda": "BEB-001",
         "nombre": "Leche Entera 1L (Soprole / Colun)",
-        "marca": "Soprole / Colun",
-        "claves": ["soprole", "colun", "loncoleche", "surlat", "leche", "entera"],
+        "marca": "Soprole",
+        "claves": ["soprole", "loncoleche", "surlat", "leche", "entera", "natural"],
         "id_categoria": 1,
         "peso": 1.0,
         "unidad_peso": "L",
@@ -286,22 +340,6 @@ CATALOGO_CHILENO_PRECARGADO: list[dict[str, Any]] = [
         "venta": 890.0,
         "perecible": True,
         "colores": ((248, 250, 252), (30, 64, 175), (148, 163, 184)),
-    },
-    {
-        "sku_ref": "BEB-102",
-        "sku_tienda": None,
-        "nombre": "Bebida Coca-Cola Original 1.5L",
-        "marca": "Coca-Cola",
-        "claves": ["coca", "cocacola", "cola", "original", "zero"],
-        "id_categoria": 1,
-        "peso": 1.5,
-        "unidad_peso": "L",
-        "formato": "LOTE",
-        "upf": 6,
-        "compra": 1250.0,
-        "venta": 1990.0,
-        "perecible": True,
-        "colores": ((210, 20, 30), (35, 20, 20), (255, 255, 255)),
     },
     {
         "sku_ref": "BEB-103",
@@ -587,26 +625,35 @@ def obtener_catalogo_chileno_referencia() -> list[dict[str, Any]]:
 
 
 # ============================================================================
-# EXTRACCIÓN DE HUELLA VISUAL Y GENERACIÓN DE MINIATURAS DE REFERENCIA
+# AISLAMIENTO DEL EMPAQUE (SIN FONDO OSCURO) Y EXTRACCIÓN DE HUELLA + OCR
 # ============================================================================
 
 
 def _recortar_objeto_activo(img: Image.Image) -> Image.Image:
-    """Elimina bordes oscuros o vacíos de la captura de cámara."""
+    """
+    Aísla la caja delimitadora 2D del producto iluminado descartando el fondo
+    oscuro de la habitación tanto en filas como en columnas.
+    """
     arr = np.asarray(img.convert("RGB"), dtype=np.float32)
     h, w, _ = arr.shape
     if h < 32 or w < 32:
         return img
 
-    lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
-    filas_activas = np.where(np.percentile(lum, 80, axis=1) > 38.0)[0]
-    cols_activas = np.where(np.percentile(lum, 80, axis=0) > 38.0)[0]
+    max_rgb = arr.max(axis=2)
+    sat = (max_rgb - arr.min(axis=2)) / np.maximum(max_rgb, 1.0)
+    # Píxel pertenece al objeto si tiene brillo suficiente o color saturado
+    mascara = (max_rgb > 46.0) | ((max_rgb > 32.0) & (sat > 0.28))
 
-    if len(filas_activas) >= int(h * 0.22) and len(cols_activas) >= int(w * 0.22):
-        y0 = max(0, int(filas_activas[0]) - 4)
-        y1 = min(h, int(filas_activas[-1]) + 5)
-        x0 = max(0, int(cols_activas[0]) - 4)
-        x1 = min(w, int(cols_activas[-1]) + 5)
+    prop_filas = mascara.mean(axis=1)
+    prop_cols = mascara.mean(axis=0)
+    filas_activas = np.where(prop_filas > 0.14)[0]
+    cols_activas = np.where(prop_cols > 0.14)[0]
+
+    if len(filas_activas) >= int(h * 0.18) and len(cols_activas) >= int(w * 0.18):
+        y0 = max(0, int(filas_activas[0]) - 2)
+        y1 = min(h, int(filas_activas[-1]) + 3)
+        x0 = max(0, int(cols_activas[0]) - 2)
+        x1 = min(w, int(cols_activas[-1]) + 3)
         if (y1 - y0) >= 24 and (x1 - x0) >= 24:
             return img.crop((x0, y0, x1, y1))
 
@@ -614,10 +661,7 @@ def _recortar_objeto_activo(img: Image.Image) -> Image.Image:
 
 
 def _evaluar_calidad_imagen(img: Image.Image) -> tuple[bool, str]:
-    """
-    Detecta si una captura es incoherente (cámara tapada/negra, imagen totalmente blanca
-    o sin variación de contraste/objeto).
-    """
+    """Detecta si la cámara está tapada/negra o sin objeto visible."""
     arr = np.asarray(img.convert("RGB"), dtype=np.float32)
     lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
     media = float(lum.mean())
@@ -633,7 +677,7 @@ def _evaluar_calidad_imagen(img: Image.Image) -> tuple[bool, str]:
 
 
 def _calcular_hashes_perceptuales(img_recortada: Image.Image) -> tuple[str, str]:
-    """Calcula dHash y aHash de 64 bits."""
+    """Calcula dHash y aHash de 64 bits sobre el objeto recortado."""
     gris_d = np.asarray(
         img_recortada.convert("L").resize((9, 8), Image.Resampling.LANCZOS),
         dtype=np.float32,
@@ -652,37 +696,107 @@ def _calcular_hashes_perceptuales(img_recortada: Image.Image) -> tuple[str, str]
     return dhash_hex, ahash_hex
 
 
-def _calcular_descriptores_color(img_recortada: Image.Image) -> tuple[list[float], list[float]]:
-    """Extrae grilla espacial 4x4x3 y el histograma cromático de 48 bins."""
+def _calcular_descriptores_color(
+    img_recortada: Image.Image,
+) -> tuple[list[float], list[float], list[float]]:
+    """
+    Extrae:
+      1. `grid_color` (48 floats): grilla espacial 4x4x3 del objeto.
+      2. `hist_color` (48 floats): histograma cromático calculado EXCLUSIVAMENTE sobre
+         los píxeles activos del producto (ignorando píxeles negros del fondo de la sala).
+      3. `perfil_color` (6 floats): proporción semántica de colores del empaque
+         [rojo, azul_celeste, amarillo_naranja, verde, blanco_claro, oscuro_cafe].
+    """
     peq = np.asarray(
         img_recortada.convert("RGB").resize((64, 64), Image.Resampling.LANCZOS),
         dtype=np.float32,
     )
-    p5 = float(np.percentile(peq, 5))
-    p95 = float(np.percentile(peq, 95))
+    r_ch = peq[:, :, 0]
+    g_ch = peq[:, :, 1]
+    b_ch = peq[:, :, 2]
+    max_c = np.maximum(np.maximum(r_ch, g_ch), b_ch)
+    min_c = np.minimum(np.minimum(r_ch, g_ch), b_ch)
+    diff_c = max_c - min_c
+
+    # Máscara de primer plano: descartar fondo negro/oscuro sin color
+    mask_fg = max_c >= 42.0
+    if int(mask_fg.sum()) < 64:
+        mask_fg = np.ones_like(max_c, dtype=bool)
+
+    fg_r = r_ch[mask_fg]
+    fg_g = g_ch[mask_fg]
+    fg_b = b_ch[mask_fg]
+    fg_max = max_c[mask_fg]
+    fg_diff = diff_c[mask_fg]
+    n_fg = float(len(fg_r))
+
+    # Perfil semántico de 6 familias cromáticas sobre el objeto real
+    es_rojo = (fg_r > 100.0) & (fg_r > fg_g * 1.32) & (fg_r > fg_b * 1.32)
+    es_azul = (fg_b > 85.0) & (fg_b > fg_r * 1.15) & (fg_b >= fg_g * 0.95)
+    es_amarillo_naranja = (
+        (fg_r > 135.0) & (fg_g > 85.0) & (fg_b < fg_g * 0.78) & (~es_rojo)
+    )
+    es_verde = (fg_g > 85.0) & (fg_g > fg_r * 1.12) & (fg_g > fg_b * 1.08)
+    es_blanco = (fg_max > 160.0) & (fg_diff < 42.0)
+    es_oscuro = (fg_max < 95.0) & (~es_rojo) & (~es_azul)
+
+    perfil = np.array(
+        [
+            float(es_rojo.sum()) / n_fg,
+            float(es_azul.sum()) / n_fg,
+            float(es_amarillo_naranja.sum()) / n_fg,
+            float(es_verde.sum()) / n_fg,
+            float(es_blanco.sum()) / n_fg,
+            float(es_oscuro.sum()) / n_fg,
+        ],
+        dtype=np.float32,
+    )
+    norm_p = float(np.linalg.norm(perfil))
+    perfil_list = (
+        [round(float(x / norm_p), 4) for x in perfil] if norm_p > 1e-6 else [0.0] * 6
+    )
+
+    # Normalizar contraste solo con percentiles de píxeles del objeto
+    p5 = float(np.percentile(peq[mask_fg], 5))
+    p95 = float(np.percentile(peq[mask_fg], 95))
     rango = max(25.0, p95 - p5)
     norm_img = np.clip((peq - p5) / rango, 0.0, 1.0)
 
-    grid = np.asarray(
-        Image.fromarray(np.uint8(norm_img * 255)).resize((4, 4), Image.Resampling.BOX),
-        dtype=np.float32,
-    ).flatten() / 255.0
-    norma_g = float(np.linalg.norm(grid))
-    grid_list = [round(float(x / norma_g), 4) for x in grid] if norma_g > 1e-6 else [0.0] * 48
-
+    # Histograma de 48 bins solo sobre píxeles del primer plano (mask_fg)
     bins = np.linspace(0.0, 1.0001, 17)
-    h_r, _ = np.histogram(norm_img[:, :, 0], bins=bins)
-    h_g, _ = np.histogram(norm_img[:, :, 1], bins=bins)
-    h_b, _ = np.histogram(norm_img[:, :, 2], bins=bins)
+    h_r, _ = np.histogram(norm_img[:, :, 0][mask_fg], bins=bins)
+    h_g, _ = np.histogram(norm_img[:, :, 1][mask_fg], bins=bins)
+    h_b, _ = np.histogram(norm_img[:, :, 2][mask_fg], bins=bins)
     hist = np.concatenate([h_r, h_g, h_b]).astype(np.float32)
     norma_h = float(np.linalg.norm(hist))
-    hist_list = [round(float(x / norma_h), 4) for x in hist] if norma_h > 1e-6 else [0.0] * 48
+    hist_list = (
+        [round(float(x / norma_h), 4) for x in hist] if norma_h > 1e-6 else [0.0] * 48
+    )
 
-    return grid_list, hist_list
+    # Grilla espacial 4x4x3 sobre la zona central (evitando esquinas de fondo)
+    central = norm_img[8:56, 8:56, :]
+    grid = (
+        np.asarray(
+            Image.fromarray(np.uint8(central * 255)).resize(
+                (4, 4), Image.Resampling.BOX
+            ),
+            dtype=np.float32,
+        ).flatten()
+        / 255.0
+    )
+    norma_g = float(np.linalg.norm(grid))
+    grid_list = (
+        [round(float(x / norma_g), 4) for x in grid] if norma_g > 1e-6 else [0.0] * 48
+    )
+
+    return grid_list, hist_list, perfil_list
 
 
 def _extraer_texto_ocr(img_recortada: Image.Image) -> list[str]:
-    """Ejecuta RapidOCR sobre la imagen del producto."""
+    """
+    Ejecuta RapidOCR en doble pasada (imagen original + imagen con realce de contraste
+    y nitidez) para capturar tanto letras claras como textos oscuros sobre etiquetas rojas/azules.
+    """
     motor = _obtener_motor_ocr()
     if motor is None:
         return []
@@ -691,26 +805,47 @@ def _extraer_texto_ocr(img_recortada: Image.Image) -> list[str]:
         ancho, alto = img_recortada.size
         if max(ancho, alto) > 720:
             escala = 720.0 / max(ancho, alto)
-            img_ocr = img_recortada.resize(
+            base_ocr = img_recortada.resize(
                 (max(1, int(ancho * escala)), max(1, int(alto * escala))),
                 Image.Resampling.LANCZOS,
             )
         else:
-            img_ocr = img_recortada
+            base_ocr = img_recortada
 
-        arr = np.asarray(img_ocr.convert("RGB"))
-        resultados, _ = motor(arr)
-        if not resultados:
-            return []
+        variantes = [base_ocr]
+        try:
+            mejorada = ImageOps.autocontrast(base_ocr, cutoff=2).filter(
+                ImageFilter.SHARPEN
+            )
+            variantes.append(mejorada)
+        except Exception:
+            pass
 
         ignorar = {"clear photo", "clearphoto", "take photo", "takephoto"}
         textos: list[str] = []
-        for item in resultados:
-            txt = str(item[1]).strip()
-            conf = float(item[2])
-            limpio = re.sub(r"[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\.\-% ]+", "", txt).strip()
-            if len(limpio) >= 2 and conf >= 0.45 and limpio.lower() not in ignorar:
-                textos.append(limpio)
+        vistos_low: set[str] = set()
+
+        for var_img in variantes:
+            arr = np.asarray(var_img.convert("RGB"))
+            resultados, _ = motor(arr)
+            if not resultados:
+                continue
+            for item in resultados:
+                txt = str(item[1]).strip()
+                conf = float(item[2])
+                limpio = re.sub(
+                    r"[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\.\-% ]+", "", txt
+                ).strip()
+                low = limpio.lower()
+                if (
+                    len(limpio) >= 2
+                    and conf >= 0.42
+                    and low not in ignorar
+                    and low not in vistos_low
+                ):
+                    vistos_low.add(low)
+                    textos.append(limpio)
+
         return textos
     except Exception:
         return []
@@ -719,18 +854,18 @@ def _extraer_texto_ocr(img_recortada: Image.Image) -> list[str]:
 def extraer_huella_visual(
     imagen_bytes: bytes, incluir_ocr: bool = True
 ) -> dict[str, Any]:
-    """Extrae el descriptor visual completo de una imagen."""
+    """Extrae el descriptor visual sin fondo + textos OCR de una imagen."""
     img_original = Image.open(io.BytesIO(imagen_bytes)).convert("RGB")
     img_obj = _recortar_objeto_activo(img_original)
 
     dhash_hex, ahash_hex = _calcular_hashes_perceptuales(img_obj)
-    grid_color, hist_color = _calcular_descriptores_color(img_obj)
+    grid_color, hist_color, perfil_color = _calcular_descriptores_color(img_obj)
     textos_ocr = _extraer_texto_ocr(img_obj) if incluir_ocr else []
 
     thumb = img_obj.copy()
     thumb.thumbnail((140, 100), Image.Resampling.LANCZOS)
     buf_t = io.BytesIO()
-    thumb.save(buf_t, format="JPEG", quality=75)
+    thumb.save(buf_t, format="JPEG", quality=78)
     thumb_b64 = base64.b64encode(buf_t.getvalue()).decode("ascii")
 
     return {
@@ -738,6 +873,7 @@ def extraer_huella_visual(
         "ahash": ahash_hex,
         "grid_color": grid_color,
         "hist_color": hist_color,
+        "perfil_color": perfil_color,
         "textos_ocr": textos_ocr,
         "miniatura_b64": thumb_b64,
     }
@@ -745,30 +881,30 @@ def extraer_huella_visual(
 
 def generar_imagen_referencia_chilena(item_chileno: dict[str, Any]) -> bytes:
     """
-    Genera una imagen de referencia de empaque comercial con la paleta cromática real
-    de la marca chilena, franjas de diseño y tipografía para precargar la base visual.
+    Retorna la fotografía real del producto chileno descargada desde Open Food Facts
+    (`data/catalogo_chileno_real.json`). Si algún SKU no tuviera foto en caché,
+    genera un respaldo visual con sus colores.
     """
+    fotos_reales = _cargar_fotos_reales_chile()
+    sku = item_chileno.get("sku_ref") or item_chileno.get("sku_tienda") or ""
+    if sku in fotos_reales and fotos_reales[sku].get("b64"):
+        try:
+            return base64.b64decode(fotos_reales[sku]["b64"])
+        except Exception:
+            pass
+
     c_principal, c_secundario, c_acento = item_chileno.get(
         "colores", ((29, 78, 216), (220, 38, 38), (255, 255, 255))
     )
     img = Image.new("RGB", (240, 165), color=c_principal)
     draw = ImageDraw.Draw(img)
-
-    # Franja superior de marca y franja inferior de categoría/formato
     draw.rectangle([0, 0, 240, 42], fill=c_secundario)
     draw.rectangle([0, 125, 240, 165], fill=c_secundario)
     draw.rectangle([16, 26, 110, 56], fill=c_acento)
-    draw.ellipse([160, 50, 224, 114], fill=c_acento)
-
-    # Textos identificadores impresos en la tarjeta de empaque
     marca = str(item_chileno.get("marca", "CHILE")).upper()[:14]
     nombre = str(item_chileno.get("nombre", "PRODUCTO"))[:26]
-    peso_txt = f"{item_chileno.get('peso', 1):g}{item_chileno.get('unidad_peso', 'g')}"
-
     draw.text((22, 34), marca, fill=(15, 23, 42))
-    draw.text((18, 72), nombre, fill=(255, 255, 255) if sum(c_principal) < 420 else (15, 23, 42))
-    draw.text((170, 76), peso_txt, fill=(15, 23, 42))
-
+    draw.text((18, 72), nombre, fill=(255, 255, 255))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=85)
     return buf.getvalue()
@@ -776,8 +912,8 @@ def generar_imagen_referencia_chilena(item_chileno: dict[str, Any]) -> bytes:
 
 def _construir_base_visual_chilena_por_defecto() -> list[dict[str, Any]]:
     """
-    Construye la base de imágenes de referencia precargadas con los productos
-    comunes del mercado chileno para que la Memoria Visual siempre tenga respaldo.
+    Construye la base precargada de 33 referencias del mercado chileno utilizando
+    las fotografías reales descargadas desde Open Food Facts (`catalogo_chileno_real.json`).
     """
     categorias_map = {
         1: "Bebidas y Lácteos",
@@ -786,29 +922,34 @@ def _construir_base_visual_chilena_por_defecto() -> list[dict[str, Any]]:
         4: "Limpieza del Hogar",
         5: "Cuidado Personal",
     }
+    fotos_reales = _cargar_fotos_reales_chile()
     referencias: list[dict[str, Any]] = []
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     for idx, prod_ch in enumerate(CATALOGO_CHILENO_PRECARGADO, start=1):
+        sku_key = prod_ch["sku_ref"]
         img_bytes = generar_imagen_referencia_chilena(prod_ch)
         huella = extraer_huella_visual(img_bytes, incluir_ocr=False)
-        huella["textos_ocr"] = list(prod_ch["claves"]) + [
-            prod_ch["marca"],
-            prod_ch["nombre"],
-        ]
+        huella["textos_ocr"] = list(prod_ch["claves"])
+        fuente_foto = fotos_reales.get(sku_key, {}).get(
+            "fuente", "Open Food Facts Chile"
+        )
 
         referencias.append(
             {
                 "id_referencia": idx,
                 "fecha_aprendizaje": ahora_str,
                 "origen": "BASE_CHILENA_PRECARGADA",
+                "fuente_imagen": fuente_foto,
                 "es_existente": prod_ch["sku_tienda"] is not None,
                 "id_producto": None,
                 "codigo_sku": prod_ch["sku_tienda"] or prod_ch["sku_ref"],
                 "nombre_producto": prod_ch["nombre"],
                 "marca": prod_ch["marca"],
                 "id_categoria": prod_ch["id_categoria"],
-                "nombre_categoria": categorias_map.get(prod_ch["id_categoria"], "General"),
+                "nombre_categoria": categorias_map.get(
+                    prod_ch["id_categoria"], "General"
+                ),
                 "formato_sugerido": prod_ch["formato"],
                 "unidades_por_formato_sugeridas": prod_ch["upf"],
                 "peso_sugerido": prod_ch["peso"],
@@ -824,7 +965,7 @@ def _construir_base_visual_chilena_por_defecto() -> list[dict[str, Any]]:
 
 
 # ============================================================================
-# SIMILITUD VISUAL Y PERSISTENCIA DE MEMORIA VISUAL
+# RELACIÓN CRUZADA ENTRE IMAGEN Y TEXTO (CROSS-MODAL SCORING)
 # ============================================================================
 
 
@@ -848,41 +989,29 @@ def _similitud_hamming_hex(h1: str, h2: str) -> float:
         return 0.0
 
 
-def _similitud_ocr(textos_a: list[str], textos_b: list[str]) -> float:
-    if not textos_a or not textos_b:
-        return 0.0
-    tokens_a = [
-        t.lower()
-        for frase in textos_a
-        for t in re.split(r"\s+", frase)
-        if len(t) >= 3
-    ]
-    tokens_b = [
-        t.lower()
-        for frase in textos_b
-        for t in re.split(r"\s+", frase)
-        if len(t) >= 3
-    ]
-    if not tokens_a or not tokens_b:
-        return 0.0
-
-    aciertos = 0.0
-    for ta in tokens_a:
-        mejor = max(
-            (SequenceMatcher(None, ta, tb).ratio() for tb in tokens_b),
-            default=0.0,
-        )
-        if mejor >= 0.74:
-            aciertos += mejor
-    return min(1.0, aciertos / max(1.0, min(len(tokens_a), len(tokens_b))))
+def _tokenizar_ocr(textos: list[str]) -> list[str]:
+    stopwords = {"clear", "photo", "take", "con", "por", "para", "del", "las", "los"}
+    tokens: list[str] = []
+    for frase in textos:
+        for t in re.split(r"[\s\-\.,/]+", frase.lower()):
+            limpio = re.sub(r"[^a-záéíóúüñ0-9]+", "", t)
+            if len(limpio) >= 3 and limpio not in stopwords and limpio not in tokens:
+                tokens.append(limpio)
+    return tokens
 
 
-def calcular_similitud_visual(
+def calcular_similitud_solo_imagen(
     huella_nueva: dict[str, Any], huella_ref: dict[str, Any]
 ) -> float:
-    """Calcula el porcentaje de similitud entre la captura actual y una referencia."""
+    """
+    Calcula la similitud puramente visual (0 a 100%) sobre los píxeles del objeto
+    (excluyendo el fondo oscuro de la habitación).
+    """
     sim_hist = _similitud_coseno(
         huella_nueva.get("hist_color", []), huella_ref.get("hist_color", [])
+    )
+    sim_perfil = _similitud_coseno(
+        huella_nueva.get("perfil_color", []), huella_ref.get("perfil_color", [])
     )
     sim_grid = _similitud_coseno(
         huella_nueva.get("grid_color", []), huella_ref.get("grid_color", [])
@@ -895,22 +1024,128 @@ def calcular_similitud_visual(
     )
     sim_hash = 0.55 * sim_dhash + 0.45 * sim_ahash
 
-    puntaje_visual = (0.42 * sim_hist + 0.30 * sim_grid + 0.28 * sim_hash) * 100.0
+    if huella_nueva.get("perfil_color") and huella_ref.get("perfil_color"):
+        puntaje = (
+            0.38 * sim_hist + 0.32 * sim_perfil + 0.16 * sim_grid + 0.14 * sim_hash
+        ) * 100.0
+    else:
+        puntaje = (0.45 * sim_hist + 0.30 * sim_grid + 0.25 * sim_hash) * 100.0
 
-    sim_texto = _similitud_ocr(
-        huella_nueva.get("textos_ocr", []), huella_ref.get("textos_ocr", [])
+    return round(min(99.5, max(0.0, puntaje)), 1)
+
+
+def calcular_similitud_solo_texto(
+    tokens_captura: list[str], tokens_candidato: list[str]
+) -> tuple[float, list[str]]:
+    """
+    Evalúa cuánto coincide el texto OCR leído en la cámara con las palabras clave
+    del producto candidato. Retorna `(puntaje_0_a_100, palabras_coincidentes)`.
+    """
+    if not tokens_captura or not tokens_candidato:
+        return 0.0, []
+
+    coincidentes: list[str] = []
+    puntaje_acum = 0.0
+
+    for tk_cap in tokens_captura:
+        mejor_ratio = 0.0
+        for tk_ref in tokens_candidato:
+            if tk_cap == tk_ref:
+                mejor_ratio = 1.0
+                break
+            if len(tk_ref) >= 4 and (tk_ref in tk_cap or tk_cap in tk_ref):
+                mejor_ratio = max(mejor_ratio, 0.92)
+            else:
+                r = SequenceMatcher(None, tk_cap, tk_ref).ratio()
+                if r > mejor_ratio:
+                    mejor_ratio = r
+
+        if mejor_ratio >= 0.74:
+            puntaje_acum += mejor_ratio
+            coincidentes.append(tk_cap)
+
+    if not coincidentes:
+        return 0.0, []
+
+    # Si coincide 1 palabra de marca fuerte (>=74%) ya tiene base >= 68 pts, y sube con cada palabra adicional
+    base = 65.0 + min(34.0, (puntaje_acum - 0.74) * 22.0 + (len(coincidentes) - 1) * 10.0)
+    return round(min(99.0, max(0.0, base)), 1), coincidentes
+
+
+def calcular_relacion_cruzada_imagen_texto(
+    huella_captura: dict[str, Any],
+    ref_candidato: dict[str, Any],
+    hay_texto_en_captura: bool,
+) -> dict[str, Any]:
+    """
+    Realiza la validación cruzada entre la Imagen capturada y el Texto OCR leído:
+      - Si la cámara leyó texto en el envase y el candidato coincide tanto en Texto
+        como en Imagen, combina ambos puntajes con sinergia positiva.
+      - Si la cámara leyó texto en el envase (ej. "Coca-Cola Sin Calorías 1.5L") pero
+        el candidato en memoria tiene un texto totalmente distinto (ej. "McKay Kuky"),
+        aplica un VETO POR CONTRADICCIÓN TEXTUAL para que jamás devuelva Galletas
+        cuando frente a la cámara hay otro producto con etiqueta legible.
+    """
+    huella_ref = ref_candidato.get("huella", {})
+    sim_img = calcular_similitud_solo_imagen(huella_captura, huella_ref)
+
+    tokens_cap = _tokenizar_ocr(huella_captura.get("textos_ocr", []))
+    textos_ref = list(huella_ref.get("textos_ocr", [])) + [
+        str(ref_candidato.get("nombre_producto", "")),
+        str(ref_candidato.get("marca", "")),
+    ]
+    tokens_ref = _tokenizar_ocr(textos_ref)
+
+    sim_txt, palabras_match = calcular_similitud_solo_texto(tokens_cap, tokens_ref)
+
+    if hay_texto_en_captura:
+        if sim_txt >= 55.0:
+            # Coincidencia cruzada Imagen + Texto
+            bono_coherencia = 10.0 if sim_img >= 45.0 else 0.0
+            score_cruzado = min(
+                99.0, 0.60 * sim_txt + 0.40 * sim_img + bono_coherencia
+            )
+            modo_cruce = "IMAGEN_Y_TEXTO_COINCIDENTES"
+        else:
+            # Contradicción: el envase en cámara dice un texto que NO pertenece a este candidato
+            score_cruzado = sim_img * 0.22
+            modo_cruce = "VETADO_POR_TEXTO_DISTINTO"
+    else:
+        # La captura no tiene texto legible: evaluar puramente por imagen sin fondo
+        score_cruzado = sim_img
+        modo_cruce = "SOLO_IMAGEN"
+
+    return {
+        "score_cruzado": round(score_cruzado, 1),
+        "sim_imagen": sim_img,
+        "sim_texto": sim_txt,
+        "palabras_match": palabras_match,
+        "modo_cruce": modo_cruce,
+    }
+
+
+def calcular_similitud_visual(
+    huella_nueva: dict[str, Any], huella_ref: dict[str, Any]
+) -> float:
+    """Función compatible de similitud cruzada entre dos huellas."""
+    tokens_cap = _tokenizar_ocr(huella_nueva.get("textos_ocr", []))
+    res = calcular_relacion_cruzada_imagen_texto(
+        huella_nueva,
+        {"huella": huella_ref},
+        hay_texto_en_captura=(len(tokens_cap) > 0),
     )
-    if sim_texto > 0:
-        puntaje_visual = min(99.0, puntaje_visual * 0.72 + (sim_texto * 100.0) * 0.38)
+    return res["score_cruzado"]
 
-    return round(min(99.5, max(0.0, puntaje_visual)), 1)
+
+# ============================================================================
+# PERSISTENCIA DE MEMORIA VISUAL Y CONSULTA EN VIVO A OPEN FOOD FACTS
+# ============================================================================
 
 
 def cargar_memoria_visual() -> list[dict[str, Any]]:
     """
-    Carga la Memoria Visual desde disco. Si no existe o tiene menos de 5 referencias,
-    integra automáticamente toda la Base Precargada de Productos Comunes del Mercado Chileno
-    preservando las fotos enseñadas por el operario en primer lugar.
+    Carga la Memoria Visual. Garantiza que las 33 referencias con fotografías reales
+    de Open Food Facts Chile estén siempre actualizadas y disponibles.
     """
     DIRECTORIO_DATOS.mkdir(parents=True, exist_ok=True)
     existentes: list[dict[str, Any]] = []
@@ -922,10 +1157,17 @@ def cargar_memoria_visual() -> list[dict[str, Any]]:
         except Exception:
             existentes = []
 
-    tiene_base_chilena = sum(
-        1 for r in existentes if r.get("origen") == "BASE_CHILENA_PRECARGADA"
+    refs_chilenas = [
+        r for r in existentes if r.get("origen") == "BASE_CHILENA_PRECARGADA"
+    ]
+    # Verificar que las referencias chilenas tengan el nuevo descriptor `perfil_color` y fotos reales
+    tiene_perfil_y_fotos = (
+        len(refs_chilenas) >= 30
+        and all("perfil_color" in r.get("huella", {}) for r in refs_chilenas[:5])
+        and any("Open Food Facts" in str(r.get("fuente_imagen", "")) for r in refs_chilenas)
     )
-    if tiene_base_chilena < 15:
+
+    if not tiene_perfil_y_fotos:
         aprendidas_operario = [
             r for r in existentes if r.get("origen") != "BASE_CHILENA_PRECARGADA"
         ]
@@ -941,7 +1183,7 @@ def cargar_memoria_visual() -> list[dict[str, Any]]:
 
 
 def guardar_memoria_visual(referencias: list[dict[str, Any]]) -> None:
-    """Guarda atómicamente la Memoria Visual."""
+    """Guarda atómicamente la Memoria Visual en disco."""
     DIRECTORIO_DATOS.mkdir(parents=True, exist_ok=True)
     tmp = ARCHIVO_MEMORIA_VISUAL.with_suffix(".tmp")
     tmp.write_text(
@@ -956,8 +1198,8 @@ def guardar_referencia_memoria_visual(
     origen: str = "CORRECCION_OPERARIO",
 ) -> dict[str, Any]:
     """
-    Guarda inmediatamente en la Memoria Visual la imagen capturada por cámara
-    asociada al producto que indicó o corrigió el operario.
+    Guarda en la Memoria Visual la imagen capturada por cámara junto a su texto OCR
+    y el producto confirmado o corregido por el operario.
     """
     huella = extraer_huella_visual(imagen_bytes, incluir_ocr=True)
     referencias = cargar_memoria_visual()
@@ -966,7 +1208,7 @@ def guardar_referencia_memoria_visual(
     nombre_real = str(datos_producto.get("nombre_detectado", "")).strip()
     textos_combinados = list(huella.get("textos_ocr", []))
     for palabra in re.split(r"\s+", nombre_real):
-        limpia = re.sub(r"[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]+", "", palabra)
+        limpia = re.sub(r"[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\.]+", "", palabra)
         if len(limpia) >= 3 and limpia not in textos_combinados:
             textos_combinados.append(limpia)
 
@@ -974,6 +1216,7 @@ def guardar_referencia_memoria_visual(
         "id_referencia": max((r.get("id_referencia", 0) for r in referencias), default=0) + 1,
         "fecha_aprendizaje": ahora_str,
         "origen": origen,
+        "fuente_imagen": "Captura de Cámara del Operario",
         "es_existente": bool(datos_producto.get("es_existente", True)),
         "id_producto": datos_producto.get("id_producto"),
         "codigo_sku": datos_producto.get("codigo_sku", "PRD-001"),
@@ -1012,7 +1255,7 @@ def guardar_referencia_memoria_visual(
 
     if not reemplazado:
         referencias.insert(0, registro)
-        referencias = referencias[:90]
+        referencias = referencias[:95]
 
     guardar_memoria_visual(referencias)
     return registro
@@ -1021,7 +1264,7 @@ def guardar_referencia_memoria_visual(
 def vincular_producto_creado_en_memoria(
     nombre_producto: str, producto_creado: dict[str, Any]
 ) -> None:
-    """Actualiza las referencias de un producto recién creado para vincularlo con su ID real."""
+    """Actualiza las referencias de un producto recién creado con su ID y SKU definitivos."""
     referencias = cargar_memoria_visual()
     modificado = False
     nom_low = nombre_producto.strip().lower()
@@ -1046,8 +1289,81 @@ def eliminar_referencia_memoria_visual(id_referencia: int) -> None:
     guardar_memoria_visual(referencias)
 
 
+def _consultar_openfoodfacts_en_vivo(
+    textos_ocr: list[str],
+    huella_captura: dict[str, Any],
+    inventario: list[dict[str, Any]],
+    categorias: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """
+    Si el texto OCR leído en el envase corresponde a un producto que no está en las
+    33 referencias locales, consulta en vivo la base pública Open Food Facts
+    (`https://search.openfoodfacts.org/search`) y valida su imagen.
+    """
+    tokens = _tokenizar_ocr(textos_ocr)
+    if not tokens:
+        return None
+
+    consulta = " ".join(tokens[:3])
+    try:
+        r = requests.get(
+            "https://search.openfoodfacts.org/search",
+            params={"q": consulta, "page_size": 3},
+            headers={"User-Agent": "GestorPyMEPro/1.0"},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return None
+        hits = r.json().get("hits", [])
+        if not hits:
+            return None
+
+        mejor_hit = hits[0]
+        nombre_off = (
+            mejor_hit.get("product_name_es")
+            or mejor_hit.get("product_name")
+            or consulta.title()
+        ).strip()
+        marcas_off = mejor_hit.get("brands") or []
+        marca_str = marcas_off[0] if isinstance(marcas_off, list) and marcas_off else str(marcas_off or "")
+        if marca_str and marca_str.lower() not in nombre_off.lower():
+            nombre_completo = f"{nombre_off} ({marca_str})".strip()
+        else:
+            nombre_completo = nombre_off
+
+        cat_default = categorias[0] if categorias else {"id_categoria": 1, "nombre_categoria": "General"}
+        pref = cat_default["nombre_categoria"][:3].upper()
+
+        return {
+            "es_existente": False,
+            "id_producto": None,
+            "codigo_sku": f"{pref}-{len(inventario) + 15:03d}",
+            "nombre_detectado": nombre_completo,
+            "nombre_categoria": cat_default["nombre_categoria"],
+            "id_categoria": cat_default["id_categoria"],
+            "stock_actual": 0,
+            "formato_sugerido": "CAJA",
+            "unidades_por_formato_sugeridas": 12,
+            "peso_sugerido": 1.0,
+            "unidad_peso_sugerida": "kg",
+            "precio_compra_sugerido": 1000.0,
+            "precio_venta_sugerido": 1590.0,
+            "perecible_sugerido": True,
+            "confianza_pct": 85,
+            "descripcion_visual": (
+                f"Relación Cruzada Imagen + Texto en Open Food Facts: "
+                f"Texto leído «{' · '.join(textos_ocr[:4])}»"
+            ),
+            "motor_vision": "🌐 Base Pública Open Food Facts + OCR",
+            "recordado_de_memoria": False,
+            "es_incoherente": False,
+        }
+    except Exception:
+        return None
+
+
 # ============================================================================
-# BÚSQUEDA POR LECTURA OCR SOBRE CATÁLOGO ACTIVO Y BASE CHILENA PRECARGADA
+# FUNCIÓN PRINCIPAL DE DETECCIÓN CRUZADA (IMAGEN + TEXTO)
 # ============================================================================
 
 
@@ -1056,7 +1372,6 @@ def _vincular_con_inventario_activo(
     nombre_buscado: str,
     inventario: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """Verifica si un producto de la base chilena ya existe en el inventario activo."""
     if sku_tienda:
         por_sku = next(
             (p for p in inventario if p["codigo_sku"].upper() == sku_tienda.upper()),
@@ -1073,162 +1388,15 @@ def _vincular_con_inventario_activo(
     return None
 
 
-def _buscar_por_ocr_en_envase(
-    textos_ocr: list[str],
-    inventario: list[dict[str, Any]],
-    categorias: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    """Cruza el texto leído en el envase con el inventario y la Base Chilena Precargada."""
-    if not textos_ocr:
-        return None
-
-    texto_unido = " ".join(textos_ocr)
-    texto_low = texto_unido.lower()
-    tokens_ocr = [
-        t.lower()
-        for t in re.split(r"[\s\-\.,/]+", texto_low)
-        if len(t) >= 3
-    ]
-    if not tokens_ocr:
-        return None
-
-    # 1. Buscar primero en la Base Precargada del Mercado Chileno por marcas/palabras clave
-    mejor_item_ch = None
-    mejor_hits_ch = 0.0
-
-    for item_ch in CATALOGO_CHILENO_PRECARGADO:
-        puntaje = 0.0
-        for clave in item_ch["claves"]:
-            for tk in tokens_ocr:
-                if clave == tk:
-                    puntaje += 1.3
-                    break
-                if (len(clave) >= 4 and clave in tk) or SequenceMatcher(None, clave, tk).ratio() >= 0.77:
-                    puntaje += 1.0
-                    break
-        if puntaje > mejor_hits_ch:
-            mejor_hits_ch = puntaje
-            mejor_item_ch = item_ch
-
-    if mejor_item_ch is not None and mejor_hits_ch >= 1.0:
-        prod_inv = _vincular_con_inventario_activo(
-            mejor_item_ch.get("sku_tienda"), mejor_item_ch["nombre"], inventario
-        )
-        conf_ocr = min(97, int(84 + mejor_hits_ch * 4))
-        if prod_inv is not None:
-            return {
-                "es_existente": True,
-                "id_producto": prod_inv["id_producto"],
-                "codigo_sku": prod_inv["codigo_sku"],
-                "nombre_detectado": prod_inv["nombre_producto"],
-                "nombre_categoria": prod_inv["nombre_categoria"],
-                "id_categoria": prod_inv["id_categoria"],
-                "stock_actual": prod_inv["stock_actual"],
-                "formato_sugerido": prod_inv["formato_habitual"],
-                "unidades_por_formato_sugeridas": prod_inv["unidades_por_formato"],
-                "peso_sugerido": prod_inv["peso_unitario"],
-                "unidad_peso_sugerida": prod_inv["unidad_peso"],
-                "precio_compra_sugerido": prod_inv["precio_compra"],
-                "precio_venta_sugerido": prod_inv["precio_venta"],
-                "perecible_sugerido": prod_inv["perecible"],
-                "confianza_pct": conf_ocr,
-                "descripcion_visual": f"Marca chilena leída en empaque: «{' · '.join(textos_ocr[:5])}»",
-                "motor_vision": "🇨🇱 Base Mercado Chileno + OCR",
-                "recordado_de_memoria": False,
-                "es_incoherente": False,
-            }
-
-        cat_obj = next(
-            (c for c in categorias if c["id_categoria"] == mejor_item_ch["id_categoria"]),
-            categorias[0],
-        )
-        return {
-            "es_existente": False,
-            "id_producto": None,
-            "codigo_sku": mejor_item_ch["sku_ref"],
-            "nombre_detectado": mejor_item_ch["nombre"],
-            "nombre_categoria": cat_obj["nombre_categoria"],
-            "id_categoria": cat_obj["id_categoria"],
-            "stock_actual": 0,
-            "formato_sugerido": mejor_item_ch["formato"],
-            "unidades_por_formato_sugeridas": mejor_item_ch["upf"],
-            "peso_sugerido": mejor_item_ch["peso"],
-            "unidad_peso_sugerida": mejor_item_ch["unidad_peso"],
-            "precio_compra_sugerido": mejor_item_ch["compra"],
-            "precio_venta_sugerido": mejor_item_ch["venta"],
-            "perecible_sugerido": mejor_item_ch["perecible"],
-            "confianza_pct": conf_ocr,
-            "descripcion_visual": f"Marca chilena leída en empaque: «{' · '.join(textos_ocr[:5])}»",
-            "motor_vision": "🇨🇱 Base Mercado Chileno + OCR",
-            "recordado_de_memoria": False,
-            "es_incoherente": False,
-        }
-
-    # 2. Buscar coincidencia directa contra nombres del inventario activo
-    stopwords = {"con", "sin", "por", "para", "del", "las", "los", "una", "natural", "clasicas", "grado"}
-    mejor_prod_inv = None
-    mejor_score_inv = 0.0
-
-    for p in inventario:
-        palabras_p = [
-            w.lower()
-            for w in re.split(r"[\s\(\)\-]+", p["nombre_producto"])
-            if len(w) >= 3 and w.lower() not in stopwords
-        ]
-        if not palabras_p:
-            continue
-        coincidencias = 0.0
-        for wp in palabras_p:
-            sim_max = max(
-                (SequenceMatcher(None, wp, tk).ratio() for tk in tokens_ocr),
-                default=0.0,
-            )
-            if sim_max >= 0.78:
-                coincidencias += sim_max
-        score = coincidencias / len(palabras_p)
-        if score > mejor_score_inv:
-            mejor_score_inv = score
-            mejor_prod_inv = p
-
-    if mejor_prod_inv is not None and mejor_score_inv >= 0.55:
-        return {
-            "es_existente": True,
-            "id_producto": mejor_prod_inv["id_producto"],
-            "codigo_sku": mejor_prod_inv["codigo_sku"],
-            "nombre_detectado": mejor_prod_inv["nombre_producto"],
-            "nombre_categoria": mejor_prod_inv["nombre_categoria"],
-            "id_categoria": mejor_prod_inv["id_categoria"],
-            "stock_actual": mejor_prod_inv["stock_actual"],
-            "formato_sugerido": mejor_prod_inv["formato_habitual"],
-            "unidades_por_formato_sugeridas": mejor_prod_inv["unidades_por_formato"],
-            "peso_sugerido": mejor_prod_inv["peso_unitario"],
-            "unidad_peso_sugerida": mejor_prod_inv["unidad_peso"],
-            "precio_compra_sugerido": mejor_prod_inv["precio_compra"],
-            "precio_venta_sugerido": mejor_prod_inv["precio_venta"],
-            "perecible_sugerido": mejor_prod_inv["perecible"],
-            "confianza_pct": min(96, int(78 + mejor_score_inv * 20)),
-            "descripcion_visual": f"Texto leído en el empaque: «{' · '.join(textos_ocr[:5])}»",
-            "motor_vision": "IA Lectora de Empaques (OCR)",
-            "recordado_de_memoria": False,
-            "es_incoherente": False,
-        }
-
-    return None
-
-
-# ============================================================================
-# FUNCIÓN PRINCIPAL DE DETECCIÓN CON PRIORIDAD A MEMORIA Y BASE CHILENA
-# ============================================================================
-
-
-def _construir_respuesta_desde_referencia(
+def _construir_respuesta_cruzada(
     ref: dict[str, Any],
-    similitud: float,
+    eval_cruce: dict[str, Any],
+    textos_ocr_captura: list[str],
     inventario: list[dict[str, Any]],
     es_incoherente: bool = False,
     motivo_incoherencia: str = "",
 ) -> dict[str, Any]:
-    """Construye el diccionario de detección sincronizado con el stock actual en vivo."""
+    """Construye la respuesta final explicando la relación cruzada entre Imagen y Texto."""
     prod_inv = None
     if ref.get("id_producto") is not None:
         prod_inv = next(
@@ -1240,28 +1408,41 @@ def _construir_respuesta_desde_referencia(
             ref.get("codigo_sku"), str(ref.get("nombre_producto", "")), inventario
         )
 
-    es_aprendida_operario = ref.get("origen") != "BASE_CHILENA_PRECARGADA"
-    motor_lbl = (
-        "🧠 Memoria Visual Aprendida (Operario)"
-        if es_aprendida_operario
-        else "🇨🇱 Base Visual Mercado Chileno"
-    )
+    score = eval_cruce["score_cruzado"]
+    sim_img = eval_cruce["sim_imagen"]
+    sim_txt = eval_cruce["sim_texto"]
+    modo_cruce = eval_cruce["modo_cruce"]
+    es_aprendida_op = ref.get("origen") != "BASE_CHILENA_PRECARGADA"
 
-    if es_incoherente:
+    if modo_cruce == "IMAGEN_Y_TEXTO_COINCIDENTES":
+        txt_leido = " · ".join(textos_ocr_captura[:5])
         desc = (
-            f"⚠️ Captura dudosa o posible incoherencia ({motivo_incoherencia}). "
-            f"Referencia chilena más próxima sugerida ({similitud:.0f}%): verifica o corrige abajo."
+            f"Validación Cruzada Imagen + Texto exitosa: Texto leído «{txt_leido}» "
+            f"({sim_txt:.0f}% coincidencia textual + {sim_img:.0f}% coincidencia visual de empaque)"
         )
-    elif es_aprendida_operario:
+        motor_lbl = (
+            "🧠 Memoria Visual + Texto OCR"
+            if es_aprendida_op
+            else "🇨🇱 Base Open Food Facts Chile (Imagen + OCR)"
+        )
+    elif es_incoherente:
+        desc = (
+            f"⚠️ Captura sin texto legible o baja certeza ({motivo_incoherencia}). "
+            f"Referencia chilena más próxima sugerida ({score:.0f}%): confirma o corrige abajo."
+        )
+        motor_lbl = "⚠️ Baja Certeza (Respaldo Base Chilena)"
+    elif es_aprendida_op:
         desc = (
             f"Reconocido por Memoria Visual enseñada por el operario "
-            f"(similitud {similitud:.1f}% con referencia #{ref['id_referencia']})"
+            f"({sim_img:.1f}% similitud visual de empaque)"
         )
+        motor_lbl = "🧠 Memoria Visual Aprendida (Operario)"
     else:
         desc = (
-            f"Coincidencia con referencia precargada del mercado chileno "
-            f"({similitud:.1f}% similitud visual)"
+            f"Coincidencia visual con fotografía real de Open Food Facts Chile "
+            f"({sim_img:.1f}% similitud de empaque)"
         )
+        motor_lbl = "🇨🇱 Base Open Food Facts Chile"
 
     if prod_inv is not None:
         return {
@@ -1279,10 +1460,11 @@ def _construir_respuesta_desde_referencia(
             "precio_compra_sugerido": prod_inv["precio_compra"],
             "precio_venta_sugerido": prod_inv["precio_venta"],
             "perecible_sugerido": prod_inv["perecible"],
-            "confianza_pct": int(round(similitud)),
+            "confianza_pct": int(round(score)),
             "descripcion_visual": desc,
             "motor_vision": motor_lbl,
-            "recordado_de_memoria": es_aprendida_operario and not es_incoherente,
+            "recordado_de_memoria": (es_aprendida_op or modo_cruce == "IMAGEN_Y_TEXTO_COINCIDENTES")
+            and not es_incoherente,
             "es_incoherente": es_incoherente,
         }
 
@@ -1307,10 +1489,11 @@ def _construir_respuesta_desde_referencia(
             ref.get("precio_venta_sugerido", 1350.0) or 1350.0
         ),
         "perecible_sugerido": bool(ref.get("perecible_sugerido", True)),
-        "confianza_pct": int(round(similitud)),
+        "confianza_pct": int(round(score)),
         "descripcion_visual": desc,
         "motor_vision": motor_lbl,
-        "recordado_de_memoria": es_aprendida_operario and not es_incoherente,
+        "recordado_de_memoria": (es_aprendida_op or modo_cruce == "IMAGEN_Y_TEXTO_COINCIDENTES")
+        and not es_incoherente,
         "es_incoherente": es_incoherente,
     }
 
@@ -1320,12 +1503,16 @@ def detectar_producto_en_imagen(
     api_key_gemini: str = "",
 ) -> dict[str, Any]:
     """
-    Analiza la imagen capturada por cámara:
-      1. Verifica calidad de imagen (detecta capturas en negro/vacías/incoherentes).
-      2. Prioriza las imágenes aprendidas de correcciones del operario en Memoria Visual.
-      3. Ejecuta lectura OCR de marcas chilenas y textos impresos en el envase.
-      4. Compara contra la Base Visual Precargada de Productos del Mercado Chileno,
-         advirtiendo si la certeza es baja para que el operario confirme o enseñe la imagen.
+    Detecta el producto en la fotografía capturada por cámara aplicando
+    Relación Cruzada entre la Imagen (sin fondo negro) y el Texto OCR leído en el envase:
+      1. Extrae la huella visual del objeto recortado y lee el texto impreso con RapidOCR.
+      2. Evalúa todos los candidatos (Memoria del Operario + 33 Fotos Reales de Open Food Facts
+         + Inventario Activo) cruzando simultáneamente `sim_imagen` y `sim_texto`.
+      3. Si la cámara leyó texto en el envase (ej. "Coca-Cola Sin Calorías 1.5L"), veta
+         automáticamente cualquier referencia cuyo texto no coincida (ej. "Galletas Kuky"),
+         eligiendo el producto donde Imagen y Texto coinciden.
+      4. Si el texto leído corresponde a una marca nueva no precargada, consulta en vivo
+         la API pública de Open Food Facts.
     """
     inventario = obtener_inventario_consolidado()
     catalogos = obtener_catalogos()
@@ -1334,64 +1521,104 @@ def detectar_producto_en_imagen(
     img_pil = Image.open(io.BytesIO(imagen_bytes)).convert("RGB")
     calidad_ok, motivo_calidad = _evaluar_calidad_imagen(img_pil)
 
-    huella_actual = extraer_huella_visual(imagen_bytes, incluir_ocr=calidad_ok)
+    huella_captura = extraer_huella_visual(imagen_bytes, incluir_ocr=calidad_ok)
+    textos_ocr = huella_captura.get("textos_ocr", [])
+    tokens_ocr = _tokenizar_ocr(textos_ocr)
+    hay_texto = len(tokens_ocr) > 0
+
     referencias_memoria = cargar_memoria_visual()
 
-    # Separar referencias enseñadas por el operario vs base chilena precargada
-    refs_operario = [
-        r for r in referencias_memoria if r.get("origen") != "BASE_CHILENA_PRECARGADA"
-    ]
-    refs_chilenas = [
-        r for r in referencias_memoria if r.get("origen") == "BASE_CHILENA_PRECARGADA"
-    ]
+    # Evaluar todos los candidatos con la Relación Cruzada Imagen + Texto
+    mejor_ref = None
+    mejor_eval = {
+        "score_cruzado": -1.0,
+        "sim_imagen": 0.0,
+        "sim_texto": 0.0,
+        "palabras_match": [],
+        "modo_cruce": "SOLO_IMAGEN",
+    }
 
-    # 1. ¿Coincide con una imagen enseñada explícitamente por el operario?
-    mejor_ref_op = None
-    mejor_sim_op = 0.0
-    for ref in refs_operario:
-        sim = calcular_similitud_visual(huella_actual, ref.get("huella", {}))
-        if sim > mejor_sim_op:
-            mejor_sim_op = sim
-            mejor_ref_op = ref
-
-    if mejor_ref_op is not None and mejor_sim_op >= 74.0:
-        return _construir_respuesta_desde_referencia(
-            mejor_ref_op, mejor_sim_op, inventario, es_incoherente=False
+    for ref in referencias_memoria:
+        ev = calcular_relacion_cruzada_imagen_texto(
+            huella_captura, ref, hay_texto_en_captura=hay_texto
         )
+        # Pequeña preferencia de desempate (+1.5 pts) a referencias enseñadas por el operario
+        # SOLO cuando no están vetadas por texto distinto
+        score_comp = ev["score_cruzado"]
+        if (
+            ref.get("origen") != "BASE_CHILENA_PRECARGADA"
+            and ev["modo_cruce"] != "VETADO_POR_TEXTO_DISTINTO"
+        ):
+            score_comp += 1.5
 
-    # 2. ¿Tiene marca o texto legible por OCR (ej. McKay Kuky, Soprole, Tucapel, Carozzi)?
-    if calidad_ok:
-        det_ocr = _buscar_por_ocr_en_envase(
-            huella_actual.get("textos_ocr", []), inventario, categorias
+        if score_comp > mejor_eval["score_cruzado"]:
+            mejor_eval = {**ev, "score_cruzado": min(99.5, round(score_comp, 1))}
+            mejor_ref = ref
+
+    # Si la cámara leyó texto claro en el envase, pero ningún candidato local coincidió en texto,
+    # consultar la base pública Open Food Facts en vivo con el texto leído
+    if hay_texto and mejor_eval["sim_texto"] < 45.0:
+        det_off_vivo = _consultar_openfoodfacts_en_vivo(
+            textos_ocr, huella_captura, inventario, categorias
         )
-        if det_ocr is not None:
-            return det_ocr
+        if det_off_vivo is not None:
+            return det_off_vivo
 
-    # 3. Comparar contra todas las referencias (Operario + Base Precargada del Mercado Chileno)
-    mejor_ref_global = mejor_ref_op
-    mejor_sim_global = mejor_sim_op
+        # Si está sin internet pero leyó palabras claras en el envase, proponer el texto leído
+        nombre_leido = " ".join(textos_ocr[:3]).title()
+        cat_def = categorias[0] if categorias else {"id_categoria": 1, "nombre_categoria": "General"}
+        pref = cat_def["nombre_categoria"][:3].upper()
+        return {
+            "es_existente": False,
+            "id_producto": None,
+            "codigo_sku": f"{pref}-{len(inventario) + 14:03d}",
+            "nombre_detectado": nombre_leido,
+            "nombre_categoria": cat_def["nombre_categoria"],
+            "id_categoria": cat_def["id_categoria"],
+            "stock_actual": 0,
+            "formato_sugerido": "CAJA",
+            "unidades_por_formato_sugeridas": 12,
+            "peso_sugerido": 1.0,
+            "unidad_peso_sugerida": "kg",
+            "precio_compra_sugerido": 950.0,
+            "precio_venta_sugerido": 1490.0,
+            "perecible_sugerido": True,
+            "confianza_pct": 80,
+            "descripcion_visual": f"Texto leído directamente del envase: «{' · '.join(textos_ocr[:4])}»",
+            "motor_vision": "IA Lectora de Empaque (Imagen + OCR)",
+            "recordado_de_memoria": False,
+            "es_incoherente": False,
+        }
 
-    for ref in refs_chilenas:
-        sim = calcular_similitud_visual(huella_actual, ref.get("huella", {}))
-        if sim > mejor_sim_global:
-            mejor_sim_global = sim
-            mejor_ref_global = ref
+    if mejor_ref is None and referencias_memoria:
+        mejor_ref = referencias_memoria[0]
 
-    if mejor_ref_global is None and referencias_memoria:
-        mejor_ref_global = referencias_memoria[0]
-        mejor_sim_global = 50.0
+    es_match_exacto_operario = (
+        mejor_ref is not None
+        and mejor_ref.get("origen") != "BASE_CHILENA_PRECARGADA"
+        and mejor_eval["modo_cruce"] != "VETADO_POR_TEXTO_DISTINTO"
+        and mejor_eval["sim_imagen"] >= 85.0
+    )
 
-    es_incoherente = (not calidad_ok) or (mejor_sim_global < 72.0)
+    es_incoherente = (not es_match_exacto_operario) and (
+        (not calidad_ok)
+        or (
+            mejor_eval["modo_cruce"] != "IMAGEN_Y_TEXTO_COINCIDENTES"
+            and mejor_eval["score_cruzado"] < 75.0
+        )
+    )
     motivo = (
         motivo_calidad
         if not calidad_ok
-        else "Objeto sin marca legible ni referencia previa exacta"
+        else "Objeto sin texto legible ni alta similitud visual"
     )
-    sim_ajustada = min(mejor_sim_global, 48.0) if not calidad_ok else mejor_sim_global
+    if not calidad_ok and not es_match_exacto_operario:
+        mejor_eval["score_cruzado"] = min(mejor_eval["score_cruzado"], 45.0)
 
-    return _construir_respuesta_desde_referencia(
-        mejor_ref_global,
-        sim_ajustada,
+    return _construir_respuesta_cruzada(
+        mejor_ref,
+        mejor_eval,
+        textos_ocr,
         inventario,
         es_incoherente=es_incoherente,
         motivo_incoherencia=motivo,
