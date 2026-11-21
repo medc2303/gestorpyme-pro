@@ -46,35 +46,83 @@ def inyectar_estilos() -> None:
         st.html(f"<style>{css}</style>")
 
 
-def render_topbar(usuario: dict[str, Any]) -> None:
-    """Renderiza el encabezado superior con marca PyME y rol activo."""
-    es_admin = usuario.get("rol") == "Administrador"
-    sigla = "PM" if es_admin else "CJ"
-    titulo = (
-        "GestorPyME Pro — Control Comercial, Inventario y Ventas"
-        if es_admin
-        else "Punto de Venta y Caja Rápida — Módulo Operativo"
+_SVGS = {
+    "store": '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+    "terminal": '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 10h12"/><path d="M6 14h4"/></svg>',
+    "chart": '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>',
+    "trending": '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
+    "ticket": '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8"/><path d="M8 11h8"/><path d="M8 15h5"/></svg>',
+    "clock": '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+    "alert": '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    "box": '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>',
+}
+
+
+def render_sidebar_brand() -> None:
+    """Tarjeta de marca corporativa en la barra lateral izquierda."""
+    st.html(
+        f"""
+        <div class="sidebar-brand-card">
+            <div class="sidebar-brand-logo">{_SVGS["store"]}</div>
+            <div>
+                <div class="sidebar-brand-title">GestorPyME Pro</div>
+                <div class="sidebar-brand-sub">Suite Comercial &amp; POS</div>
+            </div>
+        </div>
+        """
     )
-    subtitulo = (
-        "Gestión integral de stock en unidades, caducidad FEFO, ingresos y recomendaciones con IA"
+
+
+def render_login_hero() -> None:
+    """Encabezado corporativo para la vista de inicio de sesión."""
+    st.html(
+        f"""
+        <div class="login-hero-card">
+            <div class="brand-icon">{_SVGS["store"]}</div>
+            <h1>GestorPyME Pro</h1>
+            <p>Plataforma comercial de ventas, inventario FEFO y visión por computadora</p>
+        </div>
+        """
+    )
+
+
+def render_topbar(
+    usuario: dict[str, Any],
+    titulo_seccion: str = "",
+    subtitulo_seccion: str = "",
+) -> None:
+    """Renderiza el encabezado superior con título del módulo activo, estado y rol."""
+    es_admin = usuario.get("rol") == "Administrador"
+    icono = _SVGS["store"] if es_admin else _SVGS["terminal"]
+    titulo = titulo_seccion or (
+        "GestorPyME Pro — Panel Comercial"
         if es_admin
-        else "Atención ágil de clientes, control de stock en tiempo real y alertas de caducidad"
+        else "Punto de Venta y Caja Rápida"
+    )
+    subtitulo = subtitulo_seccion or (
+        "Control integral de inventario en unidades, caducidad FEFO y ventas en tiempo real"
+        if es_admin
+        else "Atención ágil de clientes, emisión de boletas y descuento automático FEFO"
     )
     clase_rol = "badge-role-admin" if es_admin else "badge-role-emp"
 
     bloque = f"""
     <header class="topbar">
         <div class="topbar-brand">
-            <div class="brand-icon">{sigla}</div>
+            <div class="brand-icon">{icono}</div>
             <div class="topbar-title">
                 <h1>{esc(titulo)}</h1>
                 <span>{esc(subtitulo)}</span>
             </div>
         </div>
         <div class="topbar-user">
+            <span class="status-live-pill">
+                <span class="status-live-dot"></span>
+                En línea
+            </span>
             <div class="user-meta">
                 <strong>{esc(usuario.get("nombre_completo", "Usuario"))}</strong>
-                <span class="badge {clase_rol}">Rol: {esc(usuario.get("rol", ""))}</span>
+                <span class="badge {clase_rol}">{esc(usuario.get("rol", ""))}</span>
             </div>
         </div>
     </header>
@@ -83,15 +131,24 @@ def render_topbar(usuario: dict[str, Any]) -> None:
 
 
 def render_kpi_grid(tarjetas: list[dict[str, str]]) -> None:
-    """Renderiza una grilla responsiva de tarjetas KPI en HTML."""
+    """Renderiza una grilla responsiva de tarjetas KPI en HTML con iconos SVG."""
     items_html = []
     for t in tarjetas:
         acento = t.get("acento", "kpi-card-accent-blue")
         color_val = f'style="color: {t["color"]};"' if t.get("color") else ""
+        ico_key = t.get("icono", "")
+        ico_html = (
+            f'<div class="kpi-icon-badge">{_SVGS[ico_key]}</div>'
+            if ico_key in _SVGS
+            else ""
+        )
         items_html.append(
             f"""
             <div class="kpi-card {esc(acento)}">
-                <div class="kpi-label">{esc(t["etiqueta"])}</div>
+                <div class="kpi-top-row">
+                    <div class="kpi-label" style="margin-bottom:0;">{esc(t["etiqueta"])}</div>
+                    {ico_html}
+                </div>
                 <div class="kpi-value" {color_val}>{esc(t["valor"])}</div>
                 <div class="kpi-note">{esc(t.get("nota", ""))}</div>
             </div>

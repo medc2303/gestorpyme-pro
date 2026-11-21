@@ -58,6 +58,8 @@ from core.ui_components import (
     render_conversion_preview,
     render_grafico_ventas_svg,
     render_kpi_grid,
+    render_login_hero,
+    render_sidebar_brand,
     render_tabla_caducidad_principal,
     render_tabla_inventario,
     render_tabla_mas_vendidos,
@@ -120,16 +122,16 @@ if "flash_ingreso" not in st.session_state:
 if "flash_merma" not in st.session_state:
     st.session_state["flash_merma"] = None
 
+if "nav_admin" not in st.session_state:
+    st.session_state["nav_admin"] = "Resumen Ejecutivo"
+
 if "mensajes_ia" not in st.session_state:
     st.session_state["mensajes_ia"] = [
         {
             "role": "assistant",
             "content": (
-                "¡Hola! Soy **AsesorIA PyME**. Estoy conectado en tiempo real a tu inventario, "
-                "ventas históricas y fechas de caducidad.\n\n"
-                "Puedo ayudarte a decidir **qué comprar para reabastecer**, **qué ofertas lanzar para "
-                "liquidar productos próximos a vencer** o **qué combos armar** para subir tu boleta promedio. "
-                "Usa los botones rápidos de arriba o escríbeme tu consulta."
+                "Hola, soy **AsesorIA PyME**. Estoy conectado en tiempo real a tu inventario, "
+                "ventas y fechas de caducidad. Pregúntame qué comprar, qué ofertas activar o cómo armar combos."
             ),
             "motor": "Sistema Listo",
         }
@@ -142,24 +144,16 @@ if "mensajes_ia" not in st.session_state:
 
 
 def vista_login() -> None:
-    col_izq, col_centro, col_der = st.columns([1, 1.35, 1])
+    col_izq, col_centro, col_der = st.columns([1.05, 1.25, 1.05])
 
     with col_centro:
-        st.html(
-            """
-            <div class="login-hero-card">
-                <div class="brand-icon">PM</div>
-                <h1>GestorPyME Pro</h1>
-                <p>Plataforma simple e inteligente para gestionar ventas, stock en unidades y caducidad en PyMEs</p>
-            </div>
-            """
-        )
+        render_login_hero()
 
         with st.container(border=True):
-            st.markdown("##### Ingreso con Credenciales")
+            st.markdown("##### Acceso a la Plataforma")
             with st.form("form_login_principal", clear_on_submit=False):
                 username = st.text_input(
-                    "Nombre de usuario",
+                    "Usuario",
                     placeholder="Ej: admin o empleado",
                 )
                 password = st.text_input(
@@ -182,11 +176,11 @@ def vista_login() -> None:
                         st.error(str(err))
 
             st.divider()
-            st.caption("**Acceso rápido de demostración (Taller de Emprendimiento):**")
+            st.caption("Acceso rápido de demostración")
             c_demo1, c_demo2 = st.columns(2)
             with c_demo1:
                 if st.button(
-                    "Dueño / Admin",
+                    "Dueño / Administrador",
                     width="stretch",
                     help="Usuario: admin | Clave: admin123",
                 ):
@@ -194,7 +188,7 @@ def vista_login() -> None:
                     st.rerun()
             with c_demo2:
                 if st.button(
-                    "Cajero / Ventas",
+                    "Cajero / Punto de Venta",
                     width="stretch",
                     help="Usuario: empleado | Clave: caja123",
                 ):
@@ -203,12 +197,12 @@ def vista_login() -> None:
 
         st.html(
             """
-            <div class="card" style="margin-top:0.9rem;padding:1rem 1.2rem;border-left:4px solid #1d4ed8;">
-                <div style="font-size:0.83rem;color:#475569;line-height:1.6;">
-                    <strong style="color:#0f172a;">GestorPyME Pro &bull; Plataforma Operativa</strong><br/>
+            <div class="card" style="margin-top:0.85rem;padding:0.95rem 1.2rem;border-left:4px solid #1d4ed8;">
+                <div style="font-size:0.81rem;color:#475569;line-height:1.6;">
+                    <strong style="color:#0f172a;">Capacidades Clave</strong><br/>
                     &bull; <strong>Conversión automática:</strong> Ingresa por Caja o Lote y controla en Unidades.<br/>
                     &bull; <strong>Control FEFO:</strong> Alertas tempranas de caducidad y mermas valorizadas.<br/>
-                    &bull; <strong>Visión IA + Asesor:</strong> Escaneo con cámara, lectura OCR y sugerencias de reposición.
+                    &bull; <strong>Visión IA + Asesor:</strong> Escaneo con cámara OCR y chat asistente flotante.
                 </div>
             </div>
             """
@@ -216,7 +210,7 @@ def vista_login() -> None:
 
 
 # ============================================================================
-# BARRA LATERAL (SESIÓN Y CONTROLES RÁPIDOS)
+# BARRA LATERAL (NAVEGACIÓN SAAS Y ESTADO DEL LOCAL)
 # ============================================================================
 
 
@@ -225,42 +219,57 @@ def render_sidebar(usuario: dict[str, Any]) -> None:
     es_admin = usuario.get("rol") == "Administrador"
 
     with st.sidebar:
-        st.markdown(f"### GestorPyME Pro")
-        st.caption(f"**{usuario['nombre_completo']}**")
-        st.caption(f"Rol activo: **{usuario['rol']}**")
+        render_sidebar_brand()
 
-        st.divider()
-        st.markdown("##### Estado Rápido del Local")
+        if es_admin:
+            st.html('<div class="sidebar-section-label">Módulos</div>')
+            with st.container(key="sidebar_nav"):
+                st.radio(
+                    "Módulos",
+                    options=[
+                        "Resumen Ejecutivo",
+                        "Punto de Venta (Caja)",
+                        "Inventario y Catálogo",
+                        "Recepción y Escáner IA",
+                        "Analítica e Historial",
+                    ],
+                    key="nav_admin",
+                    label_visibility="collapsed",
+                )
+            st.divider()
+
+        st.html('<div class="sidebar-section-label">Estado del Local</div>')
         c1, c2 = st.columns(2)
-        c1.metric("Catálogo", f"{resumen['total_productos_activos']} prod.")
+        c1.metric("Catálogo", f"{resumen['total_productos_activos']}")
         c2.metric("Stock Crítico", f"{resumen['productos_stock_critico']}")
 
         c3, c4 = st.columns(2)
-        c3.metric("Por Vencer (30d)", f"{resumen['productos_proximos_vencer']}")
-        c4.metric("Ventas Hoy/Hist.", f"{resumen['total_ventas_completadas']}")
+        c3.metric("Por Vencer", f"{resumen['productos_proximos_vencer']}")
+        c4.metric("Boletas", f"{resumen['total_ventas_completadas']}")
 
         if resumen["productos_vencidos"] > 0:
             st.error(
-                f"Hay **{resumen['productos_vencidos']}** producto(s) vencido(s) que requieren retiro por Merma."
+                f"Hay {resumen['productos_vencidos']} producto(s) vencido(s) por retirar."
             )
         elif resumen["productos_caducidad_urgente"] > 0:
             st.warning(
-                f"**{resumen['productos_caducidad_urgente']}** producto(s) vencen en ≤ 7 días."
+                f"{resumen['productos_caducidad_urgente']} producto(s) vencen en ≤ 7 días."
             )
 
         if es_admin:
-            with st.expander("Herramientas de Presentación"):
+            with st.expander("Herramientas de Demo"):
                 st.caption(
-                    "Restablece el inventario, fechas de caducidad y ventas de ejemplo para repetir la demo."
+                    "Restablece inventario, caducidades y ventas iniciales de prueba."
                 )
                 if st.button("Restaurar Datos Demo", width="stretch"):
                     restaurar_datos_demo()
                     st.session_state["carrito"] = {}
                     st.session_state["ultimo_comprobante"] = None
-                    st.toast("Datos de demostración restaurados correctamente.", icon=None)
+                    st.toast("Datos de demostración restaurados.", icon=None)
                     st.rerun()
 
         st.divider()
+        st.caption(f"Sesión: **{usuario['nombre_completo']}** ({usuario['rol']})")
         if st.button("Cerrar Sesión", width="stretch"):
             st.session_state["usuario"] = None
             st.session_state["carrito"] = {}
@@ -1324,30 +1333,24 @@ def render_bloque_escaner_camara(
 
 
 def vista_administrador(usuario: dict[str, Any]) -> None:
-    render_topbar(usuario)
-
-    (
-        tab_inicio,
-        tab_caja,
-        tab_inventario,
-        tab_ingreso,
-        tab_analitica,
-        tab_ia,
-    ) = st.tabs(
-        [
-            "Panel Principal",
-            "Punto de Venta (Caja)",
-            "Chequeo de Inventario",
-            "Ingresar Inventario y Mermas",
-            "Analítica e Historial",
-            "Asesor IA Comercial",
-        ]
+    seccion = st.session_state.get("nav_admin", "Resumen Ejecutivo")
+    subtitulos = {
+        "Resumen Ejecutivo": "Indicadores financieros clave, rotación de ventas y control FEFO de caducidad",
+        "Punto de Venta (Caja)": "Cobro rápido al cliente con cálculo de precios, ofertas activas y boleta instantánea",
+        "Inventario y Catálogo": "Supervisión en tiempo real de unidades convertidas, peso total y liquidaciones",
+        "Recepción y Escáner IA": "Escaneo inteligente con cámara OCR, ingreso manual por Caja/Lote y control de mermas",
+        "Analítica e Historial": "Planificación de reabastecimiento, ranking de rentabilidad y auditoría completa",
+    }
+    render_topbar(
+        usuario,
+        titulo_seccion=seccion,
+        subtitulo_seccion=subtitulos.get(seccion, ""),
     )
 
     # ========================================================================
-    # PESTAÑA 1: PANEL PRINCIPAL (INGRESOS, KPIs Y LO PRÓXIMO A VENCER)
+    # MÓDULO 1: RESUMEN EJECUTIVO (KPIs, GRÁFICO Y CADUCIDAD FEFO)
     # ========================================================================
-    with tab_inicio:
+    if seccion == "Resumen Ejecutivo":
         resumen = obtener_resumen_ejecutivo()
         alertas_cad = obtener_alertas_caducidad(dias_umbral=30)
 
@@ -1358,38 +1361,44 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     "valor": moneda(resumen["ingresos_acumulados"]),
                     "nota": f"{resumen['total_ventas_completadas']} boletas completadas",
                     "acento": "kpi-card-accent-blue",
+                    "icono": "chart",
                 },
                 {
                     "etiqueta": "Utilidad Neta Estimada",
                     "valor": moneda(resumen["utilidad_estimada_total"]),
-                    "nota": "Ganancia descontando costo de compra",
+                    "nota": "Ganancia descontando costo",
                     "acento": "kpi-card-accent-green",
                     "color": "#15803d",
+                    "icono": "trending",
                 },
                 {
                     "etiqueta": "Ticket Promedio",
                     "valor": moneda(resumen["ticket_promedio_general"]),
-                    "nota": f"Promedio {resumen['promedio_unidades_por_venta']} uds por boleta",
+                    "nota": f"Promedio {resumen['promedio_unidades_por_venta']} uds/boleta",
                     "acento": "kpi-card-accent-purple",
+                    "icono": "ticket",
                 },
                 {
-                    "etiqueta": "Próximos a Vencer / Vencidos",
+                    "etiqueta": "Riesgo Caducidad (30d)",
                     "valor": f"{resumen['productos_proximos_vencer']} prod.",
                     "nota": f"Capital expuesto: {moneda(resumen['valor_riesgo_caducidad'])}",
                     "acento": "kpi-card-accent-orange",
                     "color": "#c2410c" if resumen["productos_proximos_vencer"] > 0 else "#15803d",
+                    "icono": "clock",
                 },
                 {
-                    "etiqueta": "Alertas de Stock Bajo/Agotado",
+                    "etiqueta": "Stock Crítico / Agotado",
                     "valor": f"{resumen['productos_stock_critico']} prod.",
-                    "nota": "Requieren compra o reposición",
+                    "nota": "Requieren reposición",
                     "acento": "kpi-card-accent-red",
+                    "icono": "alert",
                 },
                 {
-                    "etiqueta": "Capital en Bodega (Costo)",
+                    "etiqueta": "Capital en Bodega",
                     "valor": moneda(resumen["valor_bodega_costo"]),
-                    "nota": f"Proyección venta: {moneda(resumen['valor_bodega_venta'])}",
+                    "nota": f"Valor venta: {moneda(resumen['valor_bodega_venta'])}",
                     "acento": "kpi-card-accent-amber",
+                    "icono": "box",
                 },
             ]
         )
@@ -1574,15 +1583,15 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                 )
 
     # ========================================================================
-    # PESTAÑA 2: PUNTO DE VENTA (CAJA)
+    # MÓDULO 2: PUNTO DE VENTA (CAJA)
     # ========================================================================
-    with tab_caja:
+    elif seccion == "Punto de Venta (Caja)":
         render_modulo_caja(usuario, prefijo_key="admin_pos")
 
     # ========================================================================
-    # PESTAÑA 3: CHEQUEO DE INVENTARIO (UNIDADES CONVERTIDAS, PESO Y CADUCIDAD)
+    # MÓDULO 3: INVENTARIO Y CATÁLOGO (UNIDADES CONVERTIDAS, PESO Y CADUCIDAD)
     # ========================================================================
-    with tab_inventario:
+    elif seccion == "Inventario y Catálogo":
         catalogos = obtener_catalogos()
         opciones_cat_inv = {0: "Todas las categorías"}
         for c in catalogos["categorias"]:
@@ -1746,9 +1755,9 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                         st.rerun()
 
     # ========================================================================
-    # PESTAÑA 4: INGRESAR INVENTARIO (CAJA / LOTE / UNIDAD, PESO, CADUCIDAD) + MERMAS
+    # MÓDULO 4: RECEPCIÓN, ESCÁNER IA Y MERMAS
     # ========================================================================
-    with tab_ingreso:
+    elif seccion == "Recepción y Escáner IA":
         catalogos = obtener_catalogos()
         mapa_cat_form = {
             c["id_categoria"]: c["nombre_categoria"] for c in catalogos["categorias"]
@@ -1759,11 +1768,25 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                 f"{pr['nombre_proveedor']} ({pr['dias_entrega_estimados']}d entrega)"
             )
 
-        col_ingreso_izq, col_merma_der = st.columns([1.38, 1], gap="large")
+        sub_rec = st.segmented_control(
+            "Operación de bodega",
+            options=[
+                "Escáner con Cámara IA",
+                "Ingreso Manual (Nuevo / Lote)",
+                "Registro de Mermas y Bajas",
+            ],
+            default="Escáner con Cámara IA",
+            label_visibility="collapsed",
+            key="seg_recepcion_modo",
+        )
+        st.markdown("")
 
-        # --- COLUMNA IZQUIERDA: INGRESO DE INVENTARIO CON CONVERSIÓN AUTOMÁTICA ---
-        with col_ingreso_izq:
+        # --- SUBMÓDULO A: ESCÁNER CON CÁMARA IA ---
+        if not sub_rec or sub_rec == "Escáner con Cámara IA":
             render_bloque_escaner_camara(usuario, mapa_cat_form, mapa_prov_form)
+
+        # --- SUBMÓDULO B: INGRESO MANUAL CON CONVERSIÓN AUTOMÁTICA ---
+        if sub_rec == "Ingreso Manual (Nuevo / Lote)":
 
             with st.container(border=True):
                 if st.session_state.get("flash_ingreso"):
@@ -2172,8 +2195,8 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                         except ErrorNegocio as err:
                             st.error(str(err))
 
-        # --- COLUMNA DERECHA: REGISTRO DE PÉRDIDAS O BAJAS (MERMA) ---
-        with col_merma_der:
+        # --- SUBMÓDULO C: REGISTRO DE PÉRDIDAS O BAJAS (MERMA) ---
+        if sub_rec == "Registro de Mermas y Bajas":
             with st.container(border=True):
                 if st.session_state.get("flash_merma"):
                     st.success(st.session_state["flash_merma"])
@@ -2287,9 +2310,9 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                             st.error(str(err))
 
     # ========================================================================
-    # PESTAÑA 5: ANALÍTICA E HISTORIAL COMPLETO
+    # MÓDULO 5: ANALÍTICA E HISTORIAL COMPLETO
     # ========================================================================
-    with tab_analitica:
+    elif seccion == "Analítica e Historial":
         sub_reab, sub_ranking, sub_hist, sub_perd = st.tabs(
             [
                 "Cálculo de Reabastecimiento",
@@ -2385,108 +2408,120 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
             )
             render_tabla_perdidas(datos_perd)
 
-    # ========================================================================
-    # PESTAÑA 6: ASESOR COMERCIAL CON IA GRATUITA
-    # ========================================================================
-    with tab_ia:
-        st.html(
-            """
-            <div class="card card-ia">
-                <div class="card-header" style="margin-bottom:0.4rem;border-bottom:none;padding-bottom:0;">
-                    <div>
-                        <h2>AsesorIA PyME — Recomendaciones de Compras, Ofertas y Ventas</h2>
-                        <span class="card-subtitle">
-                            Analiza en vivo tus ventas, rotación de 30 días, márgenes y fechas de caducidad para sugerir decisiones rentables
-                        </span>
-                    </div>
-                    <span class="module-pill module-pill-purple">100% Gratuito</span>
-                </div>
-            </div>
-            """
-        )
+# ============================================================================
+# BOTÓN FLOTANTE DE CHAT IA (MINI CHAT ACCESIBLE EN TODA LA APP)
+# ============================================================================
 
-        with st.expander("Motor de Inteligencia Artificial (Funciona gratis sin configurar nada)"):
-            ia_c1, ia_c2 = st.columns([1.3, 1.7])
-            with ia_c1:
+
+def render_chat_flotante_ia() -> None:
+    """Botón flotante en la esquina inferior derecha que abre un mini chat con el Asesor IA."""
+    with st.container(key="chat_fab_wrap"):
+        with st.popover("Asesor IA", key="popover_chat_ia"):
+            st.html(
+                """
+                <div class="mini-chat-header">
+                    <div>
+                        <div class="mini-chat-header-title">AsesorIA PyME</div>
+                        <div class="mini-chat-header-sub">Compras, ofertas FEFO y ventas en vivo</div>
+                    </div>
+                    <span class="mini-chat-pill">En línea</span>
+                </div>
+                """
+            )
+
+            with st.expander("Ajustes del motor IA", expanded=False):
                 modo_ia = st.selectbox(
-                    "Proveedor de IA",
+                    "Proveedor",
                     options=["AUTO_GRATIS", "LOCAL", "GEMINI", "GROQ"],
                     format_func=lambda m: {
-                        "AUTO_GRATIS": "Automático Gratuito (IA Nube sin Key + Respaldo Local)",
-                        "LOCAL": "Motor Analítico Experto Local (Instantáneo / Offline)",
-                        "GEMINI": "Google Gemini 2.5 Flash (API Key gratis AI Studio)",
-                        "GROQ": "Groq Llama 3.3 70B (API Key gratis Groq)",
+                        "AUTO_GRATIS": "Automático Gratuito (Nube + Local)",
+                        "LOCAL": "Motor Local Instantáneo (Offline)",
+                        "GEMINI": "Google Gemini 2.5 Flash",
+                        "GROQ": "Groq Llama 3.3 70B",
                     }[m],
                     key="cfg_modo_ia",
                 )
-            with ia_c2:
                 api_key_ia = st.text_input(
-                    "API Key opcional (solo si elegiste Gemini o Groq)",
+                    "API Key opcional",
                     type="password",
-                    placeholder="No requerida en modo Automático ni Local",
+                    placeholder="Opcional en Gemini / Groq",
                     key="cfg_apikey_ia",
                 )
 
-        st.markdown("###### Consultas Estratégicas en 1 Clic:")
-        q_col1, q_col2, q_col3, q_col4 = st.columns(4)
-        pregunta_boton: str | None = None
+            q1, q2, q3, q4 = st.columns([1.05, 1.0, 1.0, 0.9])
+            pregunta_boton: str | None = None
+            with q1:
+                if st.button("Compras", width="stretch", key="mini_q_compras"):
+                    pregunta_boton = (
+                        "Según mis ventas y el stock actual, ¿qué productos debo comprar con prioridad esta semana, "
+                        "en qué cantidad de cajas/lotes y cuánto presupuesto necesito?"
+                    )
+            with q2:
+                if st.button("Ofertas", width="stretch", key="mini_q_ofertas"):
+                    pregunta_boton = (
+                        "Revisa los productos próximos a vencer y dime qué ofertas o porcentajes de descuento exactos "
+                        "me recomiendas aplicar hoy para no perder dinero."
+                    )
+            with q3:
+                if st.button("Combos", width="stretch", key="mini_q_combos"):
+                    pregunta_boton = (
+                        "Propón combos o packs combinando mis productos más vendidos con los de menor rotación o próximos "
+                        "a vencer para aumentar el ticket promedio."
+                    )
+            with q4:
+                if st.button("Limpiar", width="stretch", key="mini_q_limpiar"):
+                    st.session_state["mensajes_ia"] = st.session_state["mensajes_ia"][:1]
 
-        with q_col1:
-            if st.button("¿Qué comprar esta semana?", width="stretch"):
-                pregunta_boton = (
-                    "Según mis ventas y el stock actual, ¿qué productos debo comprar con prioridad esta semana, "
-                    "en qué cantidad de cajas/lotes y cuánto presupuesto necesito?"
-                )
-        with q_col2:
-            if st.button("Ofertas por caducidad", width="stretch"):
-                pregunta_boton = (
-                    "Revisa los productos próximos a vencer y dime qué ofertas o porcentajes de descuento exactos "
-                    "me recomiendas aplicar hoy para no perder dinero."
-                )
-        with q_col3:
-            if st.button("Crear packs y combos", width="stretch"):
-                pregunta_boton = (
-                    "Propón combos o packs combinando mis productos más vendidos con los de menor rotación o próximos "
-                    "a vencer para aumentar el ticket promedio."
-                )
-        with q_col4:
-            if st.button("Limpiar chat", width="stretch"):
-                st.session_state["mensajes_ia"] = st.session_state["mensajes_ia"][:1]
-                st.rerun()
+            placeholder_historial = st.container(height=280, border=False)
 
-        contenedor_chat = st.container(border=True)
-        with contenedor_chat:
-            for msg in st.session_state["mensajes_ia"]:
-                avatar = None
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
-                    if msg.get("motor") and msg["role"] == "assistant":
-                        st.caption(f"Fuente: {msg['motor']}")
+            with st.form("mini_chat_ia_form", clear_on_submit=True):
+                c_inp, c_btn = st.columns([3.1, 1.1])
+                with c_inp:
+                    txt_usuario = st.text_input(
+                        "Consulta",
+                        placeholder="Pregunta sobre stock, compras u ofertas...",
+                        label_visibility="collapsed",
+                        key="mini_chat_input",
+                    )
+                with c_btn:
+                    enviado = st.form_submit_button(
+                        "Enviar", type="primary", width="stretch"
+                    )
 
-        entrada_chat = st.chat_input(
-            "Pregúntale a la IA sobre futuras compras, descuentos, caducidad o productos específicos..."
-        )
-        consulta_final = pregunta_boton or entrada_chat
-
-        if consulta_final:
-            st.session_state["mensajes_ia"].append(
-                {"role": "user", "content": consulta_final}
+            consulta_final = pregunta_boton or (
+                txt_usuario.strip() if enviado and txt_usuario.strip() else None
             )
-            with st.spinner("Analizando inventario, rotación de ventas y caducidades..."):
-                texto_ia, fuente_motor = generar_respuesta_asistente(
-                    pregunta_usuario=consulta_final,
-                    historial_chat=st.session_state["mensajes_ia"][:-1],
-                    proveedor_ia=modo_ia,
-                    api_key=api_key_ia,
+
+            if consulta_final:
+                st.session_state["mensajes_ia"].append(
+                    {"role": "user", "content": consulta_final}
                 )
-            st.session_state["mensajes_ia"].append(
-                {
-                    "role": "assistant",
-                    "content": texto_ia,
-                    "motor": fuente_motor,
-                }
-            )
-            st.rerun()
+                with st.spinner("Consultando inventario y ventas..."):
+                    texto_ia, fuente_motor = generar_respuesta_asistente(
+                        pregunta_usuario=consulta_final,
+                        historial_chat=st.session_state["mensajes_ia"][:-1],
+                        proveedor_ia=modo_ia,
+                        api_key=api_key_ia,
+                    )
+                st.session_state["mensajes_ia"].append(
+                    {
+                        "role": "assistant",
+                        "content": texto_ia,
+                        "motor": fuente_motor,
+                    }
+                )
+
+            with placeholder_historial:
+                for msg in st.session_state["mensajes_ia"]:
+                    if msg["role"] == "user":
+                        st.html(
+                            f'<div class="chat-bubble-user">{esc(msg["content"])}</div>'
+                        )
+                    else:
+                        with st.container(border=True):
+                            st.markdown(msg["content"])
+                            if msg.get("motor"):
+                                st.caption(f"Fuente: {msg['motor']}")
 
 
 # ============================================================================
@@ -2495,7 +2530,11 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
 
 
 def vista_empleado(usuario: dict[str, Any]) -> None:
-    render_topbar(usuario)
+    render_topbar(
+        usuario,
+        titulo_seccion="Punto de Venta (Caja)",
+        subtitulo_seccion="Cobro rápido, control automático de stock y descuento FEFO",
+    )
     render_modulo_caja(usuario, prefijo_key="emp_pos")
 
 
@@ -2515,6 +2554,8 @@ def main() -> None:
         vista_administrador(usuario_actual)
     else:
         vista_empleado(usuario_actual)
+
+    render_chat_flotante_ia()
 
 
 if __name__ == "__main__":
