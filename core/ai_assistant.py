@@ -222,22 +222,22 @@ def _motor_analitico_local(pregunta: str, ctx: dict[str, Any]) -> str:
     for p in inv:
         if p["nombre_producto"].lower() in q or p["codigo_sku"].lower() in q:
             return (
-                f"### 🔎 Análisis Específico: **{p['nombre_producto']}** (`{p['codigo_sku']}`)\n\n"
+                f"### Análisis Específico: **{p['nombre_producto']}** (`{p['codigo_sku']}`)\n\n"
                 f"- **Stock actual convertido:** **{p['stock_actual']} unidades** ({p['equivalencia_formato']}) | Mínimo de seguridad: {p['stock_minimo']} uds.\n"
                 f"- **Peso registrado:** {p['peso_unitario_texto']} por unidad (**{p['peso_total_texto']}** totales en bodega).\n"
-                f"- **Rentabilidad:** Costo {moneda(p['precio_compra'])} → Venta {moneda(p['precio_efectivo'])} (**Margen {p['porcentaje_margen']:.1f}%**).\n"
+                f"- **Rentabilidad:** Costo {moneda(p['precio_compra'])} -> Venta {moneda(p['precio_efectivo'])} (**Margen {p['porcentaje_margen']:.1f}%**).\n"
                 f"- **Ventas acumuladas:** {p['unidades_vendidas_total']} unidades despachadas.\n"
                 f"- **Estado de Caducidad:** **{p['etiqueta_caducidad']}** (Fecha: {p['fecha_caducidad_fmt']}).\n\n"
                 + (
-                    f"⚠️ **Acción inmediata:** Este lote está **vencido**. Retíralo de sala y regístralo en la pestaña *Ingresar Inventario y Mermas*."
+                    f"**Acción inmediata:** Este lote está **vencido**. Retíralo de sala y regístralo en la pestaña *Ingresar Inventario y Mermas*."
                     if p["estado_caducidad"] == "VENCIDO"
                     else (
-                        f"🏷️ **Recomendación comercial:** Quedan pocos días para su vencimiento. Activa una **oferta del 25% al 35%** desde el Chequeo de Inventario para recuperar los **{moneda(p['valor_stock_costo'])}** invertidos."
+                        f"**Recomendación comercial:** Quedan pocos días para su vencimiento. Activa una **oferta del 25% al 35%** desde el Chequeo de Inventario para recuperar los **{moneda(p['valor_stock_costo'])}** invertidos."
                         if p["estado_caducidad"] == "URGENTE"
                         else (
-                            f"📦 **Recomendación de compra:** El stock está en nivel **{p['estado_stock']}**. Conviene reabastecer con **{p['nombre_proveedor']}**."
+                            f"**Recomendación de compra:** El stock está en nivel **{p['estado_stock']}**. Conviene reabastecer con **{p['nombre_proveedor']}**."
                             if p["estado_stock"] in ("AGOTADO", "CRITICO")
-                            else "✅ **Diagnóstico:** Producto saludable en inventario y margen. Puedes incluirlo en combos promocionales para impulsar el ticket promedio."
+                            else "**Diagnóstico:** Producto saludable en inventario y margen. Puedes incluirlo en combos promocionales para impulsar el ticket promedio."
                         )
                     )
                 )
@@ -278,7 +278,7 @@ def _motor_analitico_local(pregunta: str, ctx: dict[str, Any]) -> str:
         )
 
         bloques.append(
-            f"### 📦 Plan Inteligente de Próximas Compras\n"
+            f"### Plan Inteligente de Próximas Compras\n"
             f"Guiándome por la velocidad real de ventas de los últimos 30 días y los tiempos de despacho de tus proveedores:\n\n"
             f"**Prioridad 1 — Reposición Inmediata (Presupuesto urgente: {moneda(presupuesto_urg)}):**\n"
             f"{lineas_u}\n\n"
@@ -287,7 +287,7 @@ def _motor_analitico_local(pregunta: str, ctx: dict[str, Any]) -> str:
                 if lineas_r
                 else ""
             )
-            + f"💡 *Presupuesto total sugerido para dejar toda la bodega en nivel óptimo:* **{moneda(presupuesto_total)}**."
+            + f"*Presupuesto total sugerido para dejar toda la bodega en nivel óptimo:* **{moneda(presupuesto_total)}**."
         )
 
     if pide_ofertas or (not pide_compras and not pide_combos):
@@ -301,7 +301,7 @@ def _motor_analitico_local(pregunta: str, ctx: dict[str, Any]) -> str:
                 for v in vencidos
             )
             txt_venc = (
-                f"⚠️ **Alerta Sanitaria Inmediata:** Retira de sala {items_v} y regístralos como **Merma por Vencimiento** "
+                f"**Alerta Sanitaria Inmediata:** Retira de sala {items_v} y regístralos como **Merma por Vencimiento** "
                 f"(no deben ponerse en oferta).\n\n"
             )
 
@@ -317,18 +317,18 @@ def _motor_analitico_local(pregunta: str, ctx: dict[str, Any]) -> str:
             )
             lineas_of.append(
                 f"- **{a['nombre_producto']}** ({a['etiqueta_caducidad']} — **{a['stock_actual']} uds**): "
-                f"Bajar de {moneda(a['precio_venta'])} a **{moneda(p_promo)} (-{dcto}% dcto)** → {nota_margen}."
+                f"Bajar de {moneda(a['precio_venta'])} a **{moneda(p_promo)} (-{dcto}% dcto)** -> {nota_margen}."
             )
 
         bloques.append(
-            f"### 🏷️ Estrategia de Ofertas Anti-Vencimiento\n"
+            f"### Estrategia de Ofertas Anti-Vencimiento\n"
             f"{txt_venc}"
             + (
                 "Para evitar que el stock próximo a caducar se convierta en pérdida, activa hoy estas promociones:\n\n"
                 + "\n".join(lineas_of)
-                + "\n\n👉 *Tip práctico: Puedes activar estos descuentos con 1 clic en la pestaña **Inicio** o en **Chequeo de Inventario**, y se aplicarán automáticamente en Caja.*"
+                + "\n\n*Sugerencia: Puedes activar estos descuentos con 1 clic en el Panel Principal o en Chequeo de Inventario, y se aplicarán automáticamente en Caja.*"
                 if lineas_of
-                else "✅ No tienes productos próximos a vencer que requieran descuentos de liquidación hoy."
+                else "No tienes productos próximos a vencer que requieran descuentos de liquidación hoy."
             )
         )
 
@@ -361,7 +361,7 @@ def _motor_analitico_local(pregunta: str, ctx: dict[str, Any]) -> str:
         )
 
         bloques.append(
-            "### 🤝 Packs y Estrategias para Aumentar Ventas\n" + "\n".join(ideas_combo)
+            "### Packs y Estrategias para Aumentar Ventas\n" + "\n".join(ideas_combo)
         )
 
     return "\n\n---\n\n".join(bloques)

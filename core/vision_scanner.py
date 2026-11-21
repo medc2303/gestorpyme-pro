@@ -1100,7 +1100,7 @@ def _consultar_openfoodfacts_en_vivo(
                         f"Verificado en Open Food Facts: Texto leído «{' · '.join(textos_ocr[:4])}» "
                         f"coincide con «{nombre_completo}»"
                     ),
-                    "motor_vision": "🌐 Base Pública Open Food Facts + OCR",
+                    "motor_vision": "Base Pública Open Food Facts + OCR",
                     "recordado_de_memoria": False,
                     "es_incoherente": False,
                 }
@@ -1168,28 +1168,28 @@ def _construir_respuesta_cruzada(
             f"({sim_txt:.0f}% coincidencia textual + {sim_img:.0f}% coincidencia visual de empaque)"
         )
         motor_lbl = (
-            "🧠 Memoria Visual + Texto OCR"
+            "Memoria Visual + Texto OCR"
             if es_aprendida_op
-            else "🇨🇱 Base Pública Mercado Chileno (Imagen + OCR)"
+            else "Base Pública Mercado Chileno (Imagen + OCR)"
         )
     elif es_incoherente:
         desc = (
-            f"⚠️ Captura sin texto legible o baja certeza ({motivo_incoherencia}). "
+            f"Captura sin texto legible o baja certeza ({motivo_incoherencia}). "
             f"Referencia chilena más próxima sugerida ({score:.0f}%): confirma o corrige abajo."
         )
-        motor_lbl = "⚠️ Baja Certeza (Respaldo Base Chilena)"
+        motor_lbl = "Baja Certeza (Respaldo Base Chilena)"
     elif es_aprendida_op:
         desc = (
             f"Reconocido por Memoria Visual enseñada por el operario "
             f"({sim_img:.1f}% similitud visual de empaque)"
         )
-        motor_lbl = "🧠 Memoria Visual Aprendida (Operario)"
+        motor_lbl = "Memoria Visual Aprendida (Operario)"
     else:
         desc = (
             f"Coincidencia visual con fotografía real de base pública chilena "
             f"({sim_img:.1f}% similitud de empaque)"
         )
-        motor_lbl = "🇨🇱 Base Pública Mercado Chileno"
+        motor_lbl = "Base Pública Mercado Chileno"
 
     if prod_inv is not None:
         return {

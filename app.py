@@ -71,7 +71,7 @@ from core.ui_components import (
 
 st.set_page_config(
     page_title="GestorPyME Pro | Ventas, Inventario y Caducidad",
-    page_icon="🏪",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -125,7 +125,7 @@ if "mensajes_ia" not in st.session_state:
         {
             "role": "assistant",
             "content": (
-                "¡Hola! Soy **AsesorIA PyME** 🤖. Estoy conectado en tiempo real a tu inventario, "
+                "¡Hola! Soy **AsesorIA PyME**. Estoy conectado en tiempo real a tu inventario, "
                 "ventas históricas y fechas de caducidad.\n\n"
                 "Puedo ayudarte a decidir **qué comprar para reabastecer**, **qué ofertas lanzar para "
                 "liquidar productos próximos a vencer** o **qué combos armar** para subir tu boleta promedio. "
@@ -156,7 +156,7 @@ def vista_login() -> None:
         )
 
         with st.container(border=True):
-            st.markdown("##### 🔐 Ingreso con Credenciales")
+            st.markdown("##### Ingreso con Credenciales")
             with st.form("form_login_principal", clear_on_submit=False):
                 username = st.text_input(
                     "Nombre de usuario",
@@ -182,11 +182,11 @@ def vista_login() -> None:
                         st.error(str(err))
 
             st.divider()
-            st.caption("⚡ **Acceso rápido de demostración (Taller de Emprendimiento):**")
+            st.caption("**Acceso rápido de demostración (Taller de Emprendimiento):**")
             c_demo1, c_demo2 = st.columns(2)
             with c_demo1:
                 if st.button(
-                    "👨‍💼 Dueño / Admin",
+                    "Dueño / Admin",
                     width="stretch",
                     help="Usuario: admin | Clave: admin123",
                 ):
@@ -194,7 +194,7 @@ def vista_login() -> None:
                     st.rerun()
             with c_demo2:
                 if st.button(
-                    "🛒 Cajero / Ventas",
+                    "Cajero / Ventas",
                     width="stretch",
                     help="Usuario: empleado | Clave: caja123",
                 ):
@@ -225,12 +225,12 @@ def render_sidebar(usuario: dict[str, Any]) -> None:
     es_admin = usuario.get("rol") == "Administrador"
 
     with st.sidebar:
-        st.markdown(f"### 🏪 GestorPyME Pro")
-        st.caption(f"👤 **{usuario['nombre_completo']}**")
-        st.caption(f"🔑 Rol activo: **{usuario['rol']}**")
+        st.markdown(f"### GestorPyME Pro")
+        st.caption(f"**{usuario['nombre_completo']}**")
+        st.caption(f"Rol activo: **{usuario['rol']}**")
 
         st.divider()
-        st.markdown("##### 📌 Estado Rápido del Local")
+        st.markdown("##### Estado Rápido del Local")
         c1, c2 = st.columns(2)
         c1.metric("Catálogo", f"{resumen['total_productos_activos']} prod.")
         c2.metric("Stock Crítico", f"{resumen['productos_stock_critico']}")
@@ -241,27 +241,27 @@ def render_sidebar(usuario: dict[str, Any]) -> None:
 
         if resumen["productos_vencidos"] > 0:
             st.error(
-                f"🚨 Hay **{resumen['productos_vencidos']}** producto(s) vencido(s) que requieren retiro por Merma."
+                f"Hay **{resumen['productos_vencidos']}** producto(s) vencido(s) que requieren retiro por Merma."
             )
         elif resumen["productos_caducidad_urgente"] > 0:
             st.warning(
-                f"⏰ **{resumen['productos_caducidad_urgente']}** producto(s) vencen en ≤ 7 días."
+                f"**{resumen['productos_caducidad_urgente']}** producto(s) vencen en ≤ 7 días."
             )
 
         if es_admin:
-            with st.expander("🛠️ Herramientas de Presentación"):
+            with st.expander("Herramientas de Presentación"):
                 st.caption(
                     "Restablece el inventario, fechas de caducidad y ventas de ejemplo para repetir la demo."
                 )
-                if st.button("🔄 Restaurar Datos Demo", width="stretch"):
+                if st.button("Restaurar Datos Demo", width="stretch"):
                     restaurar_datos_demo()
                     st.session_state["carrito"] = {}
                     st.session_state["ultimo_comprobante"] = None
-                    st.toast("Datos de demostración restaurados correctamente.", icon="✅")
+                    st.toast("Datos de demostración restaurados correctamente.", icon=None)
                     st.rerun()
 
         st.divider()
-        if st.button("🚪 Cerrar Sesión", width="stretch"):
+        if st.button("Cerrar Sesión", width="stretch"):
             st.session_state["usuario"] = None
             st.session_state["carrito"] = {}
             st.session_state["ultimo_comprobante"] = None
@@ -376,7 +376,7 @@ def render_modulo_caja(usuario: dict[str, Any], prefijo_key: str = "pos") -> Non
                             )
                         elif es_vencido:
                             st.button(
-                                "Vencido ⚠️",
+                                "Vencido",
                                 key=f"{prefijo_key}_add_{idp}",
                                 disabled=True,
                                 help="Producto vencido: retírelo en la pestaña de Mermas.",
@@ -427,7 +427,7 @@ def render_modulo_caja(usuario: dict[str, Any], prefijo_key: str = "pos") -> Non
 
             if not carrito_actual:
                 st.html(
-                    '<div class="empty-state">🛒 El carrito está vacío.<br/>Seleccione productos del catálogo izquierdo.</div>'
+                    '<div class="empty-state">El carrito está vacío.<br/>Seleccione productos del catálogo izquierdo.</div>'
                 )
             else:
                 subtotal_sin_dcto = 0.0
@@ -485,7 +485,7 @@ def render_modulo_caja(usuario: dict[str, Any], prefijo_key: str = "pos") -> Non
                             unsafe_allow_html=True,
                         )
                     with ci4:
-                        if st.button("✕", key=f"{prefijo_key}_del_{idp}", help="Quitar"):
+                        if st.button("", key=f"{prefijo_key}_del_{idp}", help="Quitar"):
                             carrito_actual.pop(idp, None)
                             st.rerun()
 
@@ -524,12 +524,12 @@ def render_modulo_caja(usuario: dict[str, Any], prefijo_key: str = "pos") -> Non
 
                 btn_v, btn_ok = st.columns([1, 2])
                 with btn_v:
-                    if st.button("🗑️ Vaciar", key=f"{prefijo_key}_vaciar", width="stretch"):
+                    if st.button("Vaciar", key=f"{prefijo_key}_vaciar", width="stretch"):
                         st.session_state["carrito"] = {}
                         st.rerun()
                 with btn_ok:
                     if st.button(
-                        "✅ Confirmar Venta",
+                        "Confirmar Venta",
                         key=f"{prefijo_key}_procesar",
                         type="primary",
                         width="stretch",
@@ -549,7 +549,7 @@ def render_modulo_caja(usuario: dict[str, Any], prefijo_key: str = "pos") -> Non
                             st.session_state["ultimo_comprobante"] = comprobante
                             st.toast(
                                 f"Venta {comprobante['numero_folio']} registrada exitosamente.",
-                                icon="🧾",
+                                icon=None,
                             )
                             st.rerun()
                         except ErrorNegocio as err:
@@ -558,7 +558,7 @@ def render_modulo_caja(usuario: dict[str, Any], prefijo_key: str = "pos") -> Non
             if st.session_state.get("ultimo_comprobante"):
                 comp = st.session_state["ultimo_comprobante"]
                 st.success(
-                    f"🧾 **Boleta {comp['numero_folio']} emitida** | "
+                    f"**Boleta {comp['numero_folio']} emitida** | "
                     f"Medio: {comp['metodo_pago']} | Total cobrado: **{moneda(comp['total_venta'])}**"
                 )
 
@@ -637,7 +637,7 @@ def render_bloque_escaner_camara(
             c_txt, c_btn = st.columns([1.85, 1.15])
             with c_txt:
                 st.markdown(
-                    "**📷 Escáner Inteligente con Cámara e IA**  \n"
+                    "**Escáner Inteligente con Cámara e IA**  \n"
                     "<span style='font-size:0.82rem;color:#475569;'>"
                     "Activa la cámara para que la IA reconozca el producto, confirma en pantalla "
                     "y luego ingresa la cantidad en Lote, Caja o Unidades."
@@ -646,7 +646,7 @@ def render_bloque_escaner_camara(
                 )
             with c_btn:
                 if st.button(
-                    "📷 Activar Cámara con IA",
+                    "Activar Cámara con IA",
                     type="primary",
                     width="stretch",
                     key="btn_activar_camara_ia",
@@ -661,14 +661,14 @@ def render_bloque_escaner_camara(
         h_izq, h_der = st.columns([2.2, 0.9])
         with h_izq:
             render_card_header(
-                "📷 Escáner Inteligente con Cámara e IA",
+                "Escáner Inteligente con Cámara e IA",
                 "1. Captura el producto  •  2. Confirma la detección  •  3. Ingresa Lote, Caja o Unidades",
                 "Visión IA + OCR",
                 "module-pill-purple",
             )
         with h_der:
             if st.button(
-                "✖️ Cerrar Cámara",
+                "Cerrar Cámara",
                 width="stretch",
                 key="btn_cerrar_camara_ia",
             ):
@@ -688,7 +688,7 @@ def render_bloque_escaner_camara(
         )
 
         catalogo_chileno = obtener_catalogo_chileno_referencia()
-        with st.expander("📁 ¿Sin cámara web o deseas probar con la Base Precargada del Mercado Chileno?"):
+        with st.expander("¿Sin cámara web o deseas probar con la Base Precargada del Mercado Chileno?"):
             cf_up, cf_ch = st.columns([1.15, 1.35])
             with cf_up:
                 foto_archivo = st.file_uploader(
@@ -708,7 +708,7 @@ def render_bloque_escaner_camara(
                     key="sel_sim_chileno",
                 )
                 if st.button(
-                    "📸 Cargar Referencia Chilena en el Escáner",
+                    "Cargar Referencia Chilena en el Escáner",
                     width="stretch",
                     key="btn_cargar_ref_chilena",
                 ):
@@ -730,11 +730,11 @@ def render_bloque_escaner_camara(
         refs_ch = [r for r in referencias_mem if r.get("origen") == "BASE_CHILENA_PRECARGADA"]
 
         with st.expander(
-            f"🧠 Base de Imágenes de Referencia ({len(refs_op)} aprendida(s) del operario + {len(refs_ch)} precargadas del mercado chileno)"
+            f"Base de Imágenes de Referencia ({len(refs_op)} aprendida(s) del operario + {len(refs_ch)} precargadas del mercado chileno)"
         ):
             tab_mem_op, tab_mem_ch = st.tabs(
                 [
-                    f"👨‍🔧 Aprendidas del Operario ({len(refs_op)})",
+                    f"Aprendidas del Operario ({len(refs_op)})",
                     f"🇨🇱 Base Precargada Mercado Chileno ({len(refs_ch)})",
                 ]
             )
@@ -768,13 +768,13 @@ def render_bloque_escaner_camara(
                             )
                         with cr_del:
                             if st.button(
-                                "🗑️ Olvidar",
+                                "Olvidar",
                                 key=f"del_mem_ref_{ref.get('id_referencia')}",
                                 width="stretch",
                             ):
                                 eliminar_referencia_memoria_visual(int(ref["id_referencia"]))
                                 st.session_state["scanner_last_img_hash"] = None
-                                st.toast("Referencia eliminada en tiempo real.", icon="🗑️")
+                                st.toast("Referencia eliminada en tiempo real.", icon=None)
                                 st.rerun()
 
             with tab_mem_ch:
@@ -812,7 +812,7 @@ def render_bloque_escaner_camara(
             hash_actual = hashlib.md5(bytes_img).hexdigest()
 
             if hash_actual != st.session_state.get("scanner_last_img_hash"):
-                with st.spinner("🤖 Analizando objeto en pantalla (Memoria Visual + Base Chilena + OCR)..."):
+                with st.spinner("Analizando objeto en pantalla (Memoria Visual + Base Chilena + OCR)..."):
                     det = detectar_producto_en_imagen(
                         bytes_img,
                         api_key_gemini=st.session_state.get("cfg_apikey_ia", ""),
@@ -837,7 +837,7 @@ def render_bloque_escaner_camara(
 
         if not det_actual or estado_scan == "SIN_CAPTURA":
             st.caption(
-                "👆 Captura una imagen con la cámara superior (o elige una referencia chilena en el desplegable) para que la IA identifique el producto."
+                "Captura una imagen con la cámara superior (o elige una referencia chilena en el desplegable) para que la IA identifique el producto."
             )
             return
 
@@ -850,7 +850,7 @@ def render_bloque_escaner_camara(
             b_si, b_no = st.columns([1.3, 1.1])
             with b_si:
                 if st.button(
-                    f"✅ Sí, confirmar que es «{det_actual['nombre_detectado']}»",
+                    f"Sí, confirmar que es «{det_actual['nombre_detectado']}»",
                     type="primary",
                     width="stretch",
                     key="btn_operario_confirma_si",
@@ -865,7 +865,7 @@ def render_bloque_escaner_camara(
                     st.rerun()
             with b_no:
                 if st.button(
-                    "🔄 No es este, corregir y guardar en Memoria Visual",
+                    "No es este, corregir y guardar en Memoria Visual",
                     width="stretch",
                     key="btn_operario_confirma_no",
                 ):
@@ -877,16 +877,16 @@ def render_bloque_escaner_camara(
         # ====================================================================
         elif estado_scan == "CORRIGIENDO_PRODUCTO":
             st.warning(
-                "🧠 **Enseñar a la IA (Corrección del Operario):** Indica cuál es realmente el producto en pantalla. "
+                "**Enseñar a la IA (Corrección del Operario):** Indica cuál es realmente el producto en pantalla. "
                 "La imagen se guardará en tiempo real en la **Memoria Visual** para recordarlo siempre en futuros escaneos."
             )
             tipo_corr = st.radio(
                 "¿Dónde quieres elegir el producto correcto?",
                 options=["EXISTENTE", "BASE_CHILENA", "NUEVO"],
                 format_func=lambda t: {
-                    "EXISTENTE": "📦 Producto actual de mi Inventario",
+                    "EXISTENTE": "Producto actual de mi Inventario",
                     "BASE_CHILENA": f"🇨🇱 Elegir de la Base de Productos del Mercado Chileno ({len(catalogo_chileno)} precargados)",
-                    "NUEVO": "➕ Escribir otro producto nuevo personalizado",
+                    "NUEVO": "Escribir otro producto nuevo personalizado",
                 }[t],
                 horizontal=True,
                 key="scan_corr_tipo",
@@ -909,7 +909,7 @@ def render_bloque_escaner_camara(
                 c_ok, c_back = st.columns(2)
                 with c_ok:
                     if st.button(
-                        "🧠 Guardar en Memoria Visual y Pasar a Cantidad",
+                        "Guardar en Memoria Visual y Pasar a Cantidad",
                         type="primary",
                         width="stretch",
                         key="btn_guardar_corr_exist",
@@ -931,7 +931,7 @@ def render_bloque_escaner_camara(
                             "perecible_sugerido": prod_elegido["perecible"],
                             "confianza_pct": 100,
                             "descripcion_visual": "Aprendido en tiempo real por corrección del operario",
-                            "motor_vision": "🧠 Memoria Visual Aprendida",
+                            "motor_vision": "Memoria Visual Aprendida",
                             "recordado_de_memoria": True,
                         }
                         if img_bytes_guardados:
@@ -942,7 +942,7 @@ def render_bloque_escaner_camara(
                             )
                             st.toast(
                                 f"¡Imagen aprendida! La IA recordará «{prod_elegido['nombre_producto']}» en futuros escaneos.",
-                                icon="🧠",
+                                icon=None,
                             )
                         st.session_state["scanner_deteccion"] = nueva_det
                         st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
@@ -971,7 +971,7 @@ def render_bloque_escaner_camara(
                 c_ok_ch, c_back_ch = st.columns(2)
                 with c_ok_ch:
                     if st.button(
-                        "🧠 Guardar Referencia Chilena en Memoria Visual y Pasar a Cantidad",
+                        "Guardar Referencia Chilena en Memoria Visual y Pasar a Cantidad",
                         type="primary",
                         width="stretch",
                         key="btn_guardar_corr_chileno",
@@ -1008,7 +1008,7 @@ def render_bloque_escaner_camara(
                                 "perecible_sugerido": match_inv["perecible"],
                                 "confianza_pct": 100,
                                 "descripcion_visual": "Vinculado con Base del Mercado Chileno y aprendido en Memoria Visual",
-                                "motor_vision": "🧠 Memoria Visual Aprendida",
+                                "motor_vision": "Memoria Visual Aprendida",
                                 "recordado_de_memoria": True,
                             }
                         else:
@@ -1031,7 +1031,7 @@ def render_bloque_escaner_camara(
                                 "perecible_sugerido": item_ch_sel["perecible"],
                                 "confianza_pct": 100,
                                 "descripcion_visual": "Aprendido desde Base del Mercado Chileno por corrección del operario",
-                                "motor_vision": "🧠 Memoria Visual Aprendida",
+                                "motor_vision": "Memoria Visual Aprendida",
                                 "recordado_de_memoria": True,
                             }
 
@@ -1043,7 +1043,7 @@ def render_bloque_escaner_camara(
                             )
                             st.toast(
                                 f"¡Aprendido en tiempo real! La IA recordará «{nueva_det['nombre_detectado']}».",
-                                icon="🧠",
+                                icon=None,
                             )
                         st.session_state["scanner_deteccion"] = nueva_det
                         st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
@@ -1072,7 +1072,7 @@ def render_bloque_escaner_camara(
                 c_ok2, c_back2 = st.columns(2)
                 with c_ok2:
                     if st.button(
-                        "🧠 Guardar Nuevo Producto en Memoria Visual y Pasar a Cantidad",
+                        "Guardar Nuevo Producto en Memoria Visual y Pasar a Cantidad",
                         type="primary",
                         width="stretch",
                         key="btn_guardar_corr_nuevo",
@@ -1088,7 +1088,7 @@ def render_bloque_escaner_camara(
                         det_actual["descripcion_visual"] = (
                             "Aprendido y guardado en Memoria Visual por corrección del operario"
                         )
-                        det_actual["motor_vision"] = "🧠 Memoria Visual Aprendida"
+                        det_actual["motor_vision"] = "Memoria Visual Aprendida"
                         det_actual["recordado_de_memoria"] = True
 
                         if img_bytes_guardados:
@@ -1099,7 +1099,7 @@ def render_bloque_escaner_camara(
                             )
                             st.toast(
                                 f"¡Imagen aprendida! La IA recordará «{det_actual['nombre_detectado']}» en futuros escaneos.",
-                                icon="🧠",
+                                icon=None,
                             )
                         st.session_state["scanner_deteccion"] = det_actual
                         st.session_state["scanner_estado"] = "CONFIRMADO_INGRESAR_CANTIDAD"
@@ -1115,7 +1115,7 @@ def render_bloque_escaner_camara(
         elif estado_scan == "CONFIRMADO_INGRESAR_CANTIDAD":
             render_banner_producto_confirmado(det_actual)
 
-            st.markdown("###### 📦 Indica cuánto del producto confirmado vas a ingresar (Lote, Caja o Unidades)")
+            st.markdown("###### Indica cuánto del producto confirmado vas a ingresar (Lote, Caja o Unidades)")
             fmt_def = det_actual.get("formato_sugerido", "CAJA")
             idx_f = (
                 ["CAJA", "LOTE", "UNIDAD"].index(fmt_def)
@@ -1130,9 +1130,9 @@ def render_bloque_escaner_camara(
                     options=["CAJA", "LOTE", "UNIDAD"],
                     index=idx_f,
                     format_func=lambda f: {
-                        "CAJA": "📦 Caja",
-                        "LOTE": "🧱 Lote / Pack",
-                        "UNIDAD": "🔹 Unidades",
+                        "CAJA": "Caja",
+                        "LOTE": "Lote / Pack",
+                        "UNIDAD": "Unidades",
                     }[f],
                     key="scan_ing_formato",
                 )
@@ -1192,7 +1192,7 @@ def render_bloque_escaner_camara(
                     scan_fecha_cad = None
 
             if not det_actual.get("es_existente", True):
-                st.markdown("###### 🏷️ Datos del Nuevo Producto Detectado")
+                st.markdown("###### Datos del Nuevo Producto Detectado")
                 sn1, sn2, sn3, sn4 = st.columns(4)
                 with sn1:
                     scan_sku_nuevo = st.text_input(
@@ -1242,7 +1242,7 @@ def render_bloque_escaner_camara(
             b_ing, b_cambiar = st.columns([1.8, 1])
             with b_ing:
                 if st.button(
-                    "📥 Confirmar e Ingresar al Inventario",
+                    "Confirmar e Ingresar al Inventario",
                     type="primary",
                     width="stretch",
                     key="btn_ejecutar_ingreso_scanner",
@@ -1265,7 +1265,7 @@ def render_bloque_escaner_camara(
                                 usuario=usuario,
                             )
                             st.session_state["scanner_mensaje_exito"] = (
-                                f"✅ **Escaneo IA ingresado:** Se sumaron **+{res['unidades_ingresadas']} unidades** "
+                                f"**Escaneo IA ingresado:** Se sumaron **+{res['unidades_ingresadas']} unidades** "
                                 f"({scan_cant} {scan_formato} × {scan_upf}u) a **{res['nombre_producto']}**. "
                                 f"Stock actualizado: **{res['stock_posterior']} uds**."
                             )
@@ -1292,7 +1292,7 @@ def render_bloque_escaner_camara(
                                 creado["nombre_producto"], creado
                             )
                             st.session_state["scanner_mensaje_exito"] = (
-                                f"✅ **Nuevo producto creado y aprendido por Escáner IA:** **{creado['nombre_producto']}** "
+                                f"**Nuevo producto creado y aprendido por Escáner IA:** **{creado['nombre_producto']}** "
                                 f"(`{creado['codigo_sku']}`) ingresado con **{creado['stock_actual']} unidades**."
                             )
 
@@ -1304,7 +1304,7 @@ def render_bloque_escaner_camara(
                         st.session_state["scanner_cam_nonce"] = (
                             st.session_state.get("scanner_cam_nonce", 0) + 1
                         )
-                        st.toast("Inventario actualizado en tiempo real desde el Escáner IA.", icon="📷")
+                        st.toast("Inventario actualizado en tiempo real desde el Escáner IA.", icon=None)
                         st.rerun()
                     except ErrorNegocio as err:
                         st.error(str(err))
@@ -1335,12 +1335,12 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
         tab_ia,
     ) = st.tabs(
         [
-            "🏠 Panel Principal",
-            "🛒 Punto de Venta (Caja)",
-            "📦 Chequeo de Inventario",
-            "📥 Ingresar Inventario y Mermas",
-            "📊 Analítica e Historial",
-            "🤖 Asesor IA Comercial",
+            "Panel Principal",
+            "Punto de Venta (Caja)",
+            "Chequeo de Inventario",
+            "Ingresar Inventario y Mermas",
+            "Analítica e Historial",
+            "Asesor IA Comercial",
         ]
     )
 
@@ -1404,7 +1404,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
         if candidatos_promo:
             with st.container(border=True):
                 st.markdown(
-                    "##### 🏷️ Acción Rápida Anti-Merma: Activar Oferta en Productos Próximos a Vencer"
+                    "##### Acción Rápida Anti-Merma: Activar Oferta en Productos Próximos a Vencer"
                 )
                 cp1, cp2, cp3 = st.columns([2.2, 1.1, 1.1])
                 mapa_cand = {
@@ -1440,7 +1440,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     )
                 with cp3:
                     if st.button(
-                        "⚡ Aplicar Precio Oferta",
+                        "Aplicar Precio Oferta",
                         type="primary",
                         width="stretch",
                         key="btn_inicio_promo",
@@ -1449,12 +1449,12 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                         if res_of["descuento_oferta_pct"] > 0:
                             st.toast(
                                 f"Oferta activa en {res_of['nombre_producto']}: {moneda(res_of['precio_oferta'])} (-{res_of['descuento_oferta_pct']:g}%)",
-                                icon="🏷️",
+                                icon=None,
                             )
                         else:
                             st.toast(
                                 f"Oferta desactivada para {res_of['nombre_producto']}.",
-                                icon="ℹ️",
+                                icon=None,
                             )
                         st.rerun()
 
@@ -1465,7 +1465,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
             with st.container(border=True):
                 cg_head, cg_sel = st.columns([1.8, 1])
                 with cg_head:
-                    st.markdown("##### 📈 Evolución de Ingresos y Ventas")
+                    st.markdown("##### Evolución de Ingresos y Ventas")
                     st.caption("Comportamiento temporal continuo del negocio")
                 with cg_sel:
                     rango_inicio = st.selectbox(
@@ -1511,7 +1511,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                 <div class="card">
                     <div class="card-header">
                         <div>
-                            <h2>🏆 Top 5 Productos Estrella</h2>
+                            <h2>Top 5 Productos Estrella</h2>
                             <span class="card-subtitle">Artículos que generan mayor flujo de caja</span>
                         </div>
                     </div>
@@ -1553,7 +1553,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     <div class="card">
                         <div class="card-header">
                             <div>
-                                <h2>🚨 Reposición Urgente</h2>
+                                <h2>Reposición Urgente</h2>
                                 <span class="card-subtitle">Productos agotados o bajo el mínimo</span>
                             </div>
                         </div>
@@ -1624,12 +1624,12 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     ],
                     format_func=lambda c: {
                         "": "Todas las caducidades",
-                        "ALERTA_CADUCIDAD": "⚠️ Con alerta (≤ 30 días o vencido)",
-                        "VENCIDO": "🚨 Vencidos",
-                        "URGENTE": "⏰ Urgentes (1 a 7 días)",
-                        "PROXIMO": "📅 Próximos (8 a 30 días)",
-                        "VIGENTE": "✅ Vigentes (> 30 días)",
-                        "NO_PERECIBLE": "📦 No perecibles",
+                        "ALERTA_CADUCIDAD": "Con alerta (≤ 30 días o vencido)",
+                        "VENCIDO": "Vencidos",
+                        "URGENTE": "Urgentes (1 a 7 días)",
+                        "PROXIMO": "Próximos (8 a 30 días)",
+                        "VIGENTE": "Vigentes (> 30 días)",
+                        "NO_PERECIBLE": "No perecibles",
                     }[c],
                     key="inv_filtro_cad",
                 )
@@ -1685,7 +1685,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
         if lista_inv:
             col_lotes, col_oferta = st.columns(2, gap="large")
             with col_lotes:
-                with st.expander("🔍 Ver Desglose de Lotes y Fechas de Caducidad por Producto"):
+                with st.expander("Ver Desglose de Lotes y Fechas de Caducidad por Producto"):
                     mapa_p_lote = {
                         p["id_producto"]: f"{p['codigo_sku']} — {p['nombre_producto']} ({p['stock_actual']} uds)"
                         for p in lista_inv
@@ -1710,7 +1710,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                             )
 
             with col_oferta:
-                with st.expander("🏷️ Configurar Descuento / Oferta Comercial a un Producto"):
+                with st.expander("Configurar Descuento / Oferta Comercial a un Producto"):
                     mapa_p_of = {
                         p["id_producto"]: (
                             f"{p['nombre_producto']} (Precio: {moneda(p['precio_venta'])}"
@@ -1741,7 +1741,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                         r_of = aplicar_oferta_producto(idp_of, float(pct_nuevo))
                         st.toast(
                             f"Oferta guardada en tiempo real: {r_of['nombre_producto']} a {moneda(r_of['precio_oferta'])} (-{r_of['descuento_oferta_pct']:g}%).",
-                            icon="🏷️",
+                            icon=None,
                         )
                         st.rerun()
 
@@ -1773,9 +1773,9 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     "Tipo de Operación de Entrada",
                     options=["NUEVO_PRODUCTO", "ABASTECER_EXISTENTE"],
                     format_func=lambda m: (
-                        "➕ Registrar Nuevo Producto"
+                        "Registrar Nuevo Producto"
                         if m == "NUEVO_PRODUCTO"
-                        else "📦 Ingresar Stock / Nuevo Lote a Producto Existente"
+                        else "Ingresar Stock / Nuevo Lote a Producto Existente"
                     ),
                     horizontal=True,
                     key="modo_ingreso_inv",
@@ -1814,16 +1814,16 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                             key="np_prov",
                         )
 
-                    st.markdown("###### 📦 1. Formato de Ingreso y Conversión a Unidades")
+                    st.markdown("###### 1. Formato de Ingreso y Conversión a Unidades")
                     f1, f2, f3 = st.columns(3)
                     with f1:
                         np_formato = st.selectbox(
                             "Formato de Ingreso *",
                             options=["CAJA", "LOTE", "UNIDAD"],
                             format_func=lambda f: {
-                                "CAJA": "📦 Caja cerrada",
-                                "LOTE": "🧱 Lote / Pack mayorista",
-                                "UNIDAD": "🔹 Unidad individual (1x1)",
+                                "CAJA": "Caja cerrada",
+                                "LOTE": "Lote / Pack mayorista",
+                                "UNIDAD": "Unidad individual (1x1)",
                             }[f],
                             key="np_formato",
                         )
@@ -1864,7 +1864,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                                 key="np_upf",
                             )
 
-                    st.markdown("###### ⚖️ 2. Peso / Contenido Neto y Fecha de Caducidad")
+                    st.markdown("###### 2. Peso / Contenido Neto y Fecha de Caducidad")
                     w1, w2, w3 = st.columns([1, 0.85, 1.35])
                     with w1:
                         np_peso_val = st.number_input(
@@ -1907,7 +1907,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                         np_fecha_cad = None
                         np_cod_lote = ""
 
-                    st.markdown("###### 💰 3. Precios y Stock Mínimo de Seguridad")
+                    st.markdown("###### 3. Precios y Stock Mínimo de Seguridad")
                     p1, p2, p3, p4 = st.columns([1.25, 1, 1, 1])
                     with p1:
                         if np_formato in ("CAJA", "LOTE"):
@@ -1970,7 +1970,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     )
 
                     if st.button(
-                        "💾 Registrar Producto y Convertir a Unidades",
+                        "Registrar Producto y Convertir a Unidades",
                         type="primary",
                         width="stretch",
                         key="btn_guardar_nuevo_prod",
@@ -2000,12 +2000,12 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                                 usuario=usuario,
                             )
                             st.session_state["flash_ingreso"] = (
-                                f"✅ Producto **{creado['nombre_producto']}** (`{creado['codigo_sku']}`) creado en tiempo real con "
+                                f"Producto **{creado['nombre_producto']}** (`{creado['codigo_sku']}`) creado en tiempo real con "
                                 f"**{creado['stock_actual']} unidades** en inventario."
                             )
                             st.toast(
                                 f"Producto {creado['nombre_producto']} guardado en tiempo real.",
-                                icon="✅",
+                                icon=None,
                             )
                             st.rerun()
                         except ErrorNegocio as err:
@@ -2048,9 +2048,9 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                             options=["CAJA", "LOTE", "UNIDAD"],
                             index=idx_fmt_def,
                             format_func=lambda f: {
-                                "CAJA": "📦 Caja cerrada",
-                                "LOTE": "🧱 Lote / Pack",
-                                "UNIDAD": "🔹 Unidades sueltas",
+                                "CAJA": "Caja cerrada",
+                                "LOTE": "Lote / Pack",
+                                "UNIDAD": "Unidades sueltas",
                             }[f],
                             key="ab_formato",
                         )
@@ -2138,7 +2138,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     )
 
                     if st.button(
-                        "✅ Confirmar Ingreso y Sumar Unidades al Stock",
+                        "Confirmar Ingreso y Sumar Unidades al Stock",
                         type="primary",
                         width="stretch",
                         key="btn_confirmar_abastecer",
@@ -2161,12 +2161,12 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                                 usuario=usuario,
                             )
                             st.session_state["flash_ingreso"] = (
-                                f"✅ Se sumaron **+{res_ab['unidades_ingresadas']} unidades** a **{res_ab['nombre_producto']}** en tiempo real. "
+                                f"Se sumaron **+{res_ab['unidades_ingresadas']} unidades** a **{res_ab['nombre_producto']}** en tiempo real. "
                                 f"Nuevo stock disponible: **{res_ab['stock_posterior']} uds**."
                             )
                             st.toast(
                                 f"+{res_ab['unidades_ingresadas']} uds sumadas a {res_ab['nombre_producto']} en tiempo real.",
-                                icon="📦",
+                                icon=None,
                             )
                             st.rerun()
                         except ErrorNegocio as err:
@@ -2199,7 +2199,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     )
                     mapa_m = {
                         p["id_producto"]: (
-                            f"{'🚨 [VENCIDO] ' if p['estado_caducidad'] == 'VENCIDO' else ''}"
+                            f"{'[VENCIDO] ' if p['estado_caducidad'] == 'VENCIDO' else ''}"
                             f"{p['codigo_sku']} — {p['nombre_producto']} ({p['stock_actual']} uds)"
                         )
                         for p in inv_merma_ord
@@ -2216,10 +2216,10 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                         "Motivo de Pérdida *",
                         options=["VENCIMIENTO", "DAÑO", "ROBO", "OTRO"],
                         format_func=lambda c: {
-                            "VENCIMIENTO": "⏰ Vencimiento / Producto caducado",
-                            "DAÑO": "📦 Daño / Rotura / Deterioro",
-                            "ROBO": "🚨 Robo / Hurto / Faltante",
-                            "OTRO": "📝 Otra pérdida de inventario",
+                            "VENCIMIENTO": "Vencimiento / Producto caducado",
+                            "DAÑO": "Daño / Rotura / Deterioro",
+                            "ROBO": "Robo / Hurto / Faltante",
+                            "OTRO": "Otra pérdida de inventario",
                         }[c],
                         key="merma_causa_sel",
                     )
@@ -2261,7 +2261,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     )
 
                     if st.button(
-                        "🚨 Registrar Pérdida y Descontar Stock",
+                        "Registrar Pérdida y Descontar Stock",
                         width="stretch",
                         key="btn_guardar_merma",
                     ):
@@ -2275,12 +2275,12 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                                 usuario=usuario,
                             )
                             st.session_state["flash_merma"] = (
-                                f"✅ Pérdida auditada en tiempo real: **-{reg['cantidad']} uds** de *{reg['nombre_producto']}* "
+                                f"Pérdida auditada en tiempo real: **-{reg['cantidad']} uds** de *{reg['nombre_producto']}* "
                                 f"({moneda(reg['costo_estimado'])}). Stock restante: **{reg['stock_posterior']} uds**."
                             )
                             st.toast(
                                 f"Merma de {reg['nombre_producto']} descontada en tiempo real.",
-                                icon="🚨",
+                                icon=None,
                             )
                             st.rerun()
                         except ErrorNegocio as err:
@@ -2292,10 +2292,10 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
     with tab_analitica:
         sub_reab, sub_ranking, sub_hist, sub_perd = st.tabs(
             [
-                "📦 Cálculo de Reabastecimiento",
-                "🏆 Más Vendidos y Categorías",
-                "📜 Historial Ventas y Compras",
-                "🚨 Historial de Pérdidas",
+                "Cálculo de Reabastecimiento",
+                "Más Vendidos y Categorías",
+                "Historial Ventas y Compras",
+                "Historial de Pérdidas",
             ]
         )
 
@@ -2394,7 +2394,7 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
             <div class="card card-ia">
                 <div class="card-header" style="margin-bottom:0.4rem;border-bottom:none;padding-bottom:0;">
                     <div>
-                        <h2>🤖 AsesorIA PyME — Recomendaciones de Compras, Ofertas y Ventas</h2>
+                        <h2>AsesorIA PyME — Recomendaciones de Compras, Ofertas y Ventas</h2>
                         <span class="card-subtitle">
                             Analiza en vivo tus ventas, rotación de 30 días, márgenes y fechas de caducidad para sugerir decisiones rentables
                         </span>
@@ -2405,17 +2405,17 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
             """
         )
 
-        with st.expander("⚙️ Motor de Inteligencia Artificial (Funciona gratis sin configurar nada)"):
+        with st.expander("Motor de Inteligencia Artificial (Funciona gratis sin configurar nada)"):
             ia_c1, ia_c2 = st.columns([1.3, 1.7])
             with ia_c1:
                 modo_ia = st.selectbox(
                     "Proveedor de IA",
                     options=["AUTO_GRATIS", "LOCAL", "GEMINI", "GROQ"],
                     format_func=lambda m: {
-                        "AUTO_GRATIS": "🌐 Automático Gratuito (IA Nube sin Key + Respaldo Local)",
-                        "LOCAL": "⚡ Motor Analítico Experto Local (Instantáneo / Offline)",
-                        "GEMINI": "✨ Google Gemini 2.5 Flash (API Key gratis AI Studio)",
-                        "GROQ": "🚀 Groq Llama 3.3 70B (API Key gratis Groq)",
+                        "AUTO_GRATIS": "Automático Gratuito (IA Nube sin Key + Respaldo Local)",
+                        "LOCAL": "Motor Analítico Experto Local (Instantáneo / Offline)",
+                        "GEMINI": "Google Gemini 2.5 Flash (API Key gratis AI Studio)",
+                        "GROQ": "Groq Llama 3.3 70B (API Key gratis Groq)",
                     }[m],
                     key="cfg_modo_ia",
                 )
@@ -2427,41 +2427,41 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
                     key="cfg_apikey_ia",
                 )
 
-        st.markdown("###### 💡 Consultas Estratégicas en 1 Clic:")
+        st.markdown("###### Consultas Estratégicas en 1 Clic:")
         q_col1, q_col2, q_col3, q_col4 = st.columns(4)
         pregunta_boton: str | None = None
 
         with q_col1:
-            if st.button("📦 ¿Qué comprar esta semana?", width="stretch"):
+            if st.button("¿Qué comprar esta semana?", width="stretch"):
                 pregunta_boton = (
                     "Según mis ventas y el stock actual, ¿qué productos debo comprar con prioridad esta semana, "
                     "en qué cantidad de cajas/lotes y cuánto presupuesto necesito?"
                 )
         with q_col2:
-            if st.button("🏷️ Ofertas por caducidad", width="stretch"):
+            if st.button("Ofertas por caducidad", width="stretch"):
                 pregunta_boton = (
                     "Revisa los productos próximos a vencer y dime qué ofertas o porcentajes de descuento exactos "
                     "me recomiendas aplicar hoy para no perder dinero."
                 )
         with q_col3:
-            if st.button("🤝 Crear packs y combos", width="stretch"):
+            if st.button("Crear packs y combos", width="stretch"):
                 pregunta_boton = (
                     "Propón combos o packs combinando mis productos más vendidos con los de menor rotación o próximos "
                     "a vencer para aumentar el ticket promedio."
                 )
         with q_col4:
-            if st.button("🧹 Limpiar chat", width="stretch"):
+            if st.button("Limpiar chat", width="stretch"):
                 st.session_state["mensajes_ia"] = st.session_state["mensajes_ia"][:1]
                 st.rerun()
 
         contenedor_chat = st.container(border=True)
         with contenedor_chat:
             for msg in st.session_state["mensajes_ia"]:
-                avatar = "🤖" if msg["role"] == "assistant" else "🧑‍💼"
-                with st.chat_message(msg["role"], avatar=avatar):
+                avatar = None
+                with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
                     if msg.get("motor") and msg["role"] == "assistant":
-                        st.caption(f"⚙️ Fuente: {msg['motor']}")
+                        st.caption(f"Fuente: {msg['motor']}")
 
         entrada_chat = st.chat_input(
             "Pregúntale a la IA sobre futuras compras, descuentos, caducidad o productos específicos..."

@@ -201,7 +201,7 @@ def render_tabla_caducidad_principal(alertas: list[dict[str, Any]]) -> None:
             """
             <div class="card card-caducidad">
                 <div class="empty-state">
-                    ✅ Excelente: No hay productos vencidos ni próximos a vencer en los próximos 30 días.
+                    Sin alertas: no hay productos vencidos ni próximos a vencer en los próximos 30 días.
                 </div>
             </div>
             """
@@ -249,7 +249,7 @@ def render_tabla_caducidad_principal(alertas: list[dict[str, Any]]) -> None:
         <div class="card card-caducidad">
             <div class="card-header">
                 <div>
-                    <h2>⏰ Alertas de Caducidad: Productos Próximos a Vencer y Vencidos</h2>
+                    <h2>Alertas de Caducidad: Próximos a Vencer y Vencidos</h2>
                     <span class="card-subtitle">
                         Control FEFO (Primero en Vencer, Primero en Salir) para activar ofertas a tiempo y evitar pérdidas de capital
                     </span>
@@ -814,31 +814,31 @@ def render_tarjeta_deteccion_ia(det: dict[str, Any]) -> None:
 
     if recordado and "Memoria Visual" in str(motor):
         estilo_badge = "background-color:#15803d;"
-        texto_badge = f"🧠 MEMORIA VISUAL DEL OPERARIO ({conf}% coincidencia)"
+        texto_badge = f"MEMORIA VISUAL DEL OPERARIO ({conf}% coincidencia)"
         nota_extra = (
             "<div style='font-size:0.8rem;color:#15803d;font-weight:600;margin-top:0.35rem;'>"
-            "✨ Coincide con una referencia confirmada previamente por el operario."
+            "Coincide con una referencia confirmada previamente por el operario."
             "</div>"
         )
     elif recordado:
         estilo_badge = "background-color:#0f766e;"
-        texto_badge = f"🇨🇱 VALIDADO EN BASE CHILENA + OCR ({conf}% coincidencia)"
+        texto_badge = f"VALIDADO EN BASE CHILENA + OCR ({conf}% coincidencia)"
         nota_extra = (
             "<div style='font-size:0.8rem;color:#0f766e;font-weight:600;margin-top:0.35rem;'>"
-            "✓ Validación cruzada entre el texto completo del envase y la imagen de referencia."
+            "Validación cruzada entre el texto completo del envase y la imagen de referencia."
             "</div>"
         )
     elif incoherente or conf < 72:
         estilo_badge = "background-color:#b45309;"
-        texto_badge = f"⚠️ BAJA CERTEZA ({conf}% &bull; Sugerencia Base Chilena)"
+        texto_badge = f"BAJA CERTEZA ({conf}% &bull; Sugerencia Base Chilena)"
         nota_extra = (
             "<div style='font-size:0.8rem;color:#b45309;font-weight:600;margin-top:0.35rem;'>"
-            "💡 Si no corresponde, presiona «No es este, elegir / corregir producto» para enseñarle a la IA."
+            "Si no corresponde, presiona «No es este, corregir y guardar en Memoria Visual» para enseñarle a la IA."
             "</div>"
         )
     else:
-        estilo_badge = "background-color:#6d28d9;"
-        texto_badge = f"🤖 DETECCIÓN IA ({conf}% confianza &bull; {esc(motor)})"
+        estilo_badge = "background-color:#4f46e5;"
+        texto_badge = f"DETECCIÓN IA ({conf}% confianza &bull; {esc(motor)})"
         nota_extra = ""
 
     st.html(
@@ -856,7 +856,7 @@ def render_tarjeta_deteccion_ia(det: dict[str, Any]) -> None:
                 <strong>Observación IA:</strong> <em>{esc(det.get("descripcion_visual", ""))}</em>
             </div>
             <div class="scanner-operator-question">
-                ❓ Confirmación del Operario: ¿El producto capturado en pantalla es «{esc(det.get("nombre_detectado", ""))}»?
+                Confirmación del Operario: ¿El producto capturado en pantalla es «{esc(det.get("nombre_detectado", ""))}»?
                 {nota_extra}
             </div>
         </div>
@@ -877,7 +877,7 @@ def render_banner_producto_confirmado(det: dict[str, Any]) -> None:
         <div class="scanner-confirmed-banner">
             <div>
                 <div class="scanner-confirmed-title">
-                    ✅ Producto Confirmado por Operario: <span class="mono">{esc(det.get("codigo_sku", ""))}</span> — {esc(det.get("nombre_detectado", ""))}
+                    Producto Confirmado por Operario: <span class="mono">{esc(det.get("codigo_sku", ""))}</span> — {esc(det.get("nombre_detectado", ""))}
                 </div>
                 <div class="scanner-confirmed-sub">
                     {esc(sub)} &bull; Categoría: {esc(det.get("nombre_categoria", ""))}
