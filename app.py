@@ -39,6 +39,7 @@ from core.store import (
     obtener_promedios_por_categoria,
     obtener_recomendaciones_reabastecimiento,
     obtener_resumen_ejecutivo,
+    obtener_serie_ganancias_y_perdidas,
     obtener_serie_ventas_tiempo,
     obtener_ultimas_ventas,
     procesar_venta,
@@ -56,6 +57,8 @@ from core.ui_components import (
     render_banner_producto_confirmado,
     render_card_header,
     render_conversion_preview,
+    render_desglose_ganancias_perdidas,
+    render_grafico_ganancias_perdidas_svg,
     render_grafico_ventas_svg,
     render_kpi_grid,
     render_login_hero,
@@ -2313,14 +2316,83 @@ def vista_administrador(usuario: dict[str, Any]) -> None:
     # MÓDULO 5: ANALÍTICA E HISTORIAL COMPLETO
     # ========================================================================
     elif seccion == "Analítica e Historial":
-        sub_reab, sub_ranking, sub_hist, sub_perd = st.tabs(
+        sub_gp, sub_reab, sub_ranking, sub_hist, sub_perd = st.tabs(
             [
+                "Ganancias y Pérdidas",
                 "Cálculo de Reabastecimiento",
                 "Más Vendidos y Categorías",
                 "Historial Ventas y Compras",
                 "Historial de Pérdidas",
             ]
         )
+
+        with sub_gp:
+            gp_h1, gp_h2 = st.columns([2.2, 1.0])
+            with gp_h1:
+                st.markdown("##### Análisis Financiero: Ganancias vs. Pérdidas")
+                st.caption(
+                    "Comparación temporal entre ganancia bruta por ventas, pérdidas valorizadas por merma y utilidad neta real"
+                )
+            with gp_h2:
+                rango_gp = st.selectbox(
+                    "Período",
+                    options=["24h", "7d", "15d", "30d", "todo"],
+                    index=2,
+                    format_func=lambda r: {
+                        "24h": "Últimas 24 horas",
+                        "7d": "Últimos 7 días",
+                        "15d": "Últimos 15 días",
+                        "30d": "Últimos 30 días",
+                        "todo": "Todo el historial",
+                    }[r],
+                    label_visibility="collapsed",
+                    key="an_rango_gp",
+                )
+
+            datos_gp = obtener_serie_ganancias_y_perdidas(rango_gp)
+            tot_gp = datos_gp["totales"]
+
+            render_kpi_grid(
+                [
+                    {
+                        "etiqueta": "Ingresos por Ventas",
+                        "valor": moneda(tot_gp["ingresos"]),
+                        "nota": f"Costo mercadería: {moneda(tot_gp['costo_ventas'])}",
+                        "acento": "kpi-card-accent-blue",
+                        "icono": "chart",
+                    },
+                    {
+                        "etiqueta": "Ganancia Bruta Ventas",
+                        "valor": moneda(tot_gp["ganancia_bruta"]),
+                        "nota": "Antes de descontar mermas",
+                        "acento": "kpi-card-accent-green",
+                        "color": "#15803d",
+                        "icono": "trending",
+                    },
+                    {
+                        "etiqueta": "Pérdidas por Merma",
+                        "valor": f"-{moneda(tot_gp['perdidas_merma'])}",
+                        "nota": "Vencimientos, daños y bajas",
+                        "acento": "kpi-card-accent-red",
+                        "color": "#b91c1c",
+                        "icono": "alert",
+                    },
+                    {
+                        "etiqueta": "Utilidad Neta del Período",
+                        "valor": moneda(tot_gp["utilidad_neta"]),
+                        "nota": f"Margen neto real: {tot_gp['margen_neto_pct']}%",
+                        "acento": "kpi-card-accent-purple",
+                        "color": "#15803d" if tot_gp["utilidad_neta"] >= 0 else "#b91c1c",
+                        "icono": "ticket",
+                    },
+                ]
+            )
+
+            with st.container(border=True):
+                st.markdown("###### Evolución de Ganancias Brutas vs. Pérdidas y Utilidad Neta")
+                render_grafico_ganancias_perdidas_svg(datos_gp)
+
+            render_desglose_ganancias_perdidas(datos_gp)
 
         with sub_reab:
             filtro_al = st.selectbox(

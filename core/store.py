@@ -1921,3 +1921,181 @@ def obtener_historial_perdidas(causa: str = "", busqueda: str = "") -> dict[str,
         },
         "registros": registros,
     }
+
+
+def obtener_serie_ganancias_y_perdidas(rango: str = "15d") -> dict[str, Any]:
+    """
+    Calcula la serie temporal y desglose de Ganancias Brutas vs Pérdidas por Merma
+    para los gráficos financieros de la sección de Analítica.
+    """
+    datos = cargar_datos()
+    mapa_prod = {int(p["id_producto"]): p for p in datos["productos"]}
+    mapa_cat = {int(c["id_categoria"]): c["nombre_categoria"] for c in datos["categorias"]}
+
+    ventas_ok = [v for v in datos["ventas"] if v.get("estado") == "COMPLETADA"]
+    mermas = [m for m in datos["movimientos"] if m.get("tipo_movimiento") == "MERMA"]
+
+    rango_limpio = rango.strip().lower()
+    ahora = datetime.now()
+    cubetas: dict[str, dict[str, Any]] = {}
+
+    if rango_limpio == "24h":
+        hora_fin = ahora.replace(minute=0, second=0, microsecond=0)
+        for i in range(23, -1, -1):
+            h = hora_fin - timedelta(hours=i)
+            clave = h.strftime("%Y-%m-%d %H:00")
+            cubetas[clave] = {
+                "fecha_iso": clave,
+                "etiqueta": h.strftime("%H:%M"),
+                "ingresos": 0.0,
+                "costo_ventas": 0.0,
+                "ganancia_bruta": 0.0,
+                "perdidas_merma": 0.0,
+                "utilidad_neta": 0.0,
+            }
+        limite_dt = ahora - timedelta(hours=24)
+        modo = "hora"
+    else:
+        hoy = date.today()
+        mapa_dias = {"7d": 7, "15d": 15, "30d": 30}
+        if rango_limpio in mapa_dias:
+            fecha_inicio = hoy - timedelta(days=mapa_dias[rango_limpio] - 1)
+        else:
+            fechas_all: list[date] = []
+            for v in ventas_ok:
+                try:
+                    fechas_all.append(datetime.strptime(v["fecha_venta"], "%Y-%m-%d %H:%M:%S").date())
+                except ValueError:
+                    pass
+            for m in mermas:
+                try:
+                    fechas_all.append(datetime.strptime(m["fecha"], "%Y-%m-%d %H:%M:%S").date())
+                except ValueError:
+                    pass
+            fecha_inicio = min(fechas_all) if fechas_all else (hoy - timedelta(days=14))
+
+        cursor_f = fecha_inicio
+        while cursor_f <= hoy:
+            iso = cursor_f.strftime("%Y-%m-%d")
+            cubetas[iso] = {
+                "fecha_iso": iso,
+                "etiqueta": cursor_f.strftime("%d/%m"),
+                "ingresos": 0.0,
+                "costo_ventas": 0.0,
+                "ganancia_bruta": 0.0,
+                "perdidas_merma": 0.0,
+                "utilidad_neta": 0.0,
+            }
+            cursor_f += timedelta(days=1)
+        limite_dt = datetime.combine(fecha_inicio, datetime.min.time())
+        modo = "dia"
+
+    ganancia_cat: dict[str, dict[str, float]] = {}
+    for v in ventas_ok:
+        try:
+            dt = datetime.strptime(v["fecha_venta"], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        if dt < limite_dt:
+            continue
+
+        clave = (
+            dt.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:00")
+            if modo == "hora"
+            else dt.strftime("%Y-%m-%d")
+        )
+        ing_venta = float(v.get("total_venta", 0.0))
+        costo_venta = 0.0
+        for det in v.get("detalles", []):
+            idp = int(det.get("id_producto", 0) or 0)
+            cant = int(det.get("cantidad", 0) or 0)
+            prod = mapa_prod.get(idp)
+            costo_u = float(prod.get("precio_compra", 0.0)) if prod else 0.0
+            sub_d = float(det.get("subtotal", cant * float(det.get("precio_unitario", 0.0))))
+            cost_d = round(cant * costo_u, 2)
+            costo_venta += cost_d
+
+            nom_cat = mapa_cat.get(int(prod["id_categoria"]), "General") if prod else "General"
+            if nom_cat not in ganancia_cat:
+                ganancia_cat[nom_cat] = {"ingresos": 0.0, "ganancia": 0.0}
+            ganancia_cat[nom_cat]["ingresos"] += sub_d
+            ganancia_cat[nom_cat]["ganancia"] += (sub_d - cost_d)
+
+        if clave in cubetas:
+            cubetas[clave]["ingresos"] = round(cubetas[clave]["ingresos"] + ing_venta, 2)
+            cubetas[clave]["costo_ventas"] = round(cubetas[clave]["costo_ventas"] + costo_venta, 2)
+
+    perdidas_causa: dict[str, dict[str, Any]] = {}
+    for m in mermas:
+        try:
+            dt = datetime.strptime(m["fecha"], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        if dt < limite_dt:
+            continue
+
+        clave = (
+            dt.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:00")
+            if modo == "hora"
+            else dt.strftime("%Y-%m-%d")
+        )
+        costo_m = float(m.get("costo_total", 0.0))
+        cant_m = int(m.get("cantidad", 0) or 0)
+        motivo_raw = str(m.get("motivo", "OTRO")).strip().upper()
+        causa = motivo_raw.split(" ")[0].split(":")[0] or "OTRO"
+        if causa not in ("VENCIMIENTO", "DAÑO", "ROBO", "OTRO"):
+            if "VENC" in motivo_raw:
+                causa = "VENCIMIENTO"
+            elif "DAÑ" in motivo_raw or "ROTUR" in motivo_raw:
+                causa = "DAÑO"
+            elif "ROB" in motivo_raw or "HURT" in motivo_raw:
+                causa = "ROBO"
+            else:
+                causa = "OTRO"
+
+        if causa not in perdidas_causa:
+            perdidas_causa[causa] = {"causa": causa, "monto": 0.0, "unidades": 0, "eventos": 0}
+        perdidas_causa[causa]["monto"] = round(perdidas_causa[causa]["monto"] + costo_m, 2)
+        perdidas_causa[causa]["unidades"] += cant_m
+        perdidas_causa[causa]["eventos"] += 1
+
+        if clave in cubetas:
+            cubetas[clave]["perdidas_merma"] = round(cubetas[clave]["perdidas_merma"] + costo_m, 2)
+
+    serie = list(cubetas.values())
+    for p in serie:
+        p["ganancia_bruta"] = round(p["ingresos"] - p["costo_ventas"], 2)
+        p["utilidad_neta"] = round(p["ganancia_bruta"] - p["perdidas_merma"], 2)
+
+    tot_ing = round(sum(p["ingresos"] for p in serie), 2)
+    tot_cost = round(sum(p["costo_ventas"] for p in serie), 2)
+    tot_gan = round(sum(p["ganancia_bruta"] for p in serie), 2)
+    tot_perd = round(sum(p["perdidas_merma"] for p in serie), 2)
+    tot_neto = round(tot_gan - tot_perd, 2)
+    margen_neto_pct = round((tot_neto / tot_ing) * 100.0, 1) if tot_ing > 0 else 0.0
+
+    lista_cat = sorted(
+        [
+            {"categoria": k, "ingresos": round(v["ingresos"], 2), "ganancia": round(v["ganancia"], 2)}
+            for k, v in ganancia_cat.items()
+        ],
+        key=lambda x: x["ganancia"],
+        reverse=True,
+    )
+    lista_causas = sorted(perdidas_causa.values(), key=lambda x: x["monto"], reverse=True)
+
+    return {
+        "rango": rango_limpio,
+        "modo": modo,
+        "totales": {
+            "ingresos": tot_ing,
+            "costo_ventas": tot_cost,
+            "ganancia_bruta": tot_gan,
+            "perdidas_merma": tot_perd,
+            "utilidad_neta": tot_neto,
+            "margen_neto_pct": margen_neto_pct,
+        },
+        "serie": serie,
+        "ganancia_por_categoria": lista_cat,
+        "perdidas_por_causa": lista_causas,
+    }

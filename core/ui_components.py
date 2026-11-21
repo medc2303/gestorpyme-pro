@@ -529,6 +529,212 @@ def render_grafico_ventas_svg(serie: list[dict[str, Any]], modo: str = "dia") ->
     )
 
 
+def render_grafico_ganancias_perdidas_svg(datos_gp: dict[str, Any]) -> None:
+    """
+    Renderiza un gráfico SVG comparativo de Ganancias Brutas vs Pérdidas por Merma
+    con línea superpuesta de Utilidad Neta del período.
+    """
+    serie = datos_gp.get("serie", [])
+    modo = datos_gp.get("modo", "dia")
+    if not serie:
+        st.html(
+            '<div class="empty-state">No hay movimientos suficientes para graficar ganancias y pérdidas en este período.</div>'
+        )
+        return
+
+    ancho = 760
+    alto = 285
+    pad_izq = 68
+    pad_der = 24
+    pad_arr = 24
+    pad_aba = 42
+    ancho_util = ancho - pad_izq - pad_der
+    alto_util = alto - pad_arr - pad_aba
+
+    max_pos = max(
+        max((float(p.get("ganancia_bruta", 0.0)) for p in serie), default=0.0),
+        max((float(p.get("perdidas_merma", 0.0)) for p in serie), default=0.0),
+        1000.0,
+    )
+    techo = max_pos * 1.15
+
+    n = len(serie)
+    ancho_slot = ancho_util / max(1, n)
+    ancho_barra = max(4.0, min(18.0, ancho_slot * 0.34))
+
+    grilla_partes = []
+    for i in range(5):
+        frac = i / 4.0
+        y = pad_arr + alto_util * frac
+        valor_nivel = techo * (1.0 - frac)
+        dash = "0" if i == 4 else "4 4"
+        grilla_partes.append(
+            f'<line x1="{pad_izq}" y1="{y:.1f}" x2="{ancho - pad_der}" y2="{y:.1f}" '
+            f'stroke="#e2e8f0" stroke-dasharray="{dash}" stroke-width="1" />'
+            f'<text x="{pad_izq - 10}" y="{y + 4:.1f}" text-anchor="end" '
+            f'fill="#64748b" font-size="11.5" font-family="Segoe UI, sans-serif">'
+            f'{esc(_eje_corto(valor_nivel))}</text>'
+        )
+
+    barras_html = []
+    pts_neto = []
+    etiquetas_x = []
+    paso_etiq = max(1, (n + 11) // 12)
+    base_y = pad_arr + alto_util
+
+    for idx, p in enumerate(serie):
+        cx = pad_izq + (idx + 0.5) * ancho_slot
+        gan = max(0.0, float(p.get("ganancia_bruta", 0.0)))
+        perd = max(0.0, float(p.get("perdidas_merma", 0.0)))
+        neto = float(p.get("utilidad_neta", 0.0))
+
+        h_gan = (gan / techo) * alto_util
+        y_gan = base_y - h_gan
+        h_perd = (perd / techo) * alto_util
+        y_perd = base_y - h_perd
+
+        y_neto = pad_arr + alto_util * (1.0 - max(0.0, neto) / techo)
+        pts_neto.append((cx, y_neto, p))
+
+        pref = "Hora" if modo == "hora" else "Fecha"
+        tip = (
+            f"{pref}: {p['fecha_iso']} | Ingresos: {moneda(p['ingresos'])} | "
+            f"Ganancia Bruta: {moneda(gan)} | Pérdidas Merma: {moneda(perd)} | "
+            f"Utilidad Neta: {moneda(neto)}"
+        )
+
+        # Barra Ganancia Bruta (Verde)
+        if gan > 0:
+            barras_html.append(
+                f'<rect x="{cx - ancho_barra - 1:.1f}" y="{y_gan:.1f}" '
+                f'width="{ancho_barra:.1f}" height="{max(2.0, h_gan):.1f}" rx="3" '
+                f'fill="#16a34a" opacity="0.88"><title>{esc(tip)}</title></rect>'
+            )
+        # Barra Pérdida / Merma (Rojo)
+        if perd > 0:
+            barras_html.append(
+                f'<rect x="{cx + 1:.1f}" y="{y_perd:.1f}" '
+                f'width="{ancho_barra:.1f}" height="{max(2.0, h_perd):.1f}" rx="3" '
+                f'fill="#dc2626" opacity="0.88"><title>{esc(tip)}</title></rect>'
+            )
+
+        if idx % paso_etiq == 0 or idx == n - 1:
+            etiquetas_x.append(
+                f'<text x="{cx:.1f}" y="{alto - 13}" text-anchor="middle" '
+                f'fill="#475569" font-size="11.5" font-family="Segoe UI, sans-serif">'
+                f'{esc(p["etiqueta"])}</text>'
+            )
+
+    coords_neto = " ".join(f"{x:.1f},{y:.1f}" for x, y, _ in pts_neto)
+    nodos_neto = "".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{4.2 if (pt["ganancia_bruta"] > 0 or pt["perdidas_merma"] > 0) else 2.6}" '
+        f'fill="#ffffff" stroke="#1d4ed8" stroke-width="2">'
+        f'<title>{esc(pt["fecha_iso"])}: Utilidad Neta {esc(moneda(pt["utilidad_neta"]))}</title></circle>'
+        for x, y, pt in pts_neto
+    )
+
+    st.html(
+        f"""
+        <div class="chart-container">
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:1.1rem;flex-wrap:wrap;margin-bottom:0.45rem;font-size:0.78rem;font-weight:600;color:#475569;">
+                <span style="display:inline-flex;align-items:center;gap:0.35rem;">
+                    <span style="width:11px;height:11px;border-radius:3px;background:#16a34a;display:inline-block;"></span>
+                    Ganancia Bruta
+                </span>
+                <span style="display:inline-flex;align-items:center;gap:0.35rem;">
+                    <span style="width:11px;height:11px;border-radius:3px;background:#dc2626;display:inline-block;"></span>
+                    Pérdidas por Merma
+                </span>
+                <span style="display:inline-flex;align-items:center;gap:0.35rem;">
+                    <span style="width:14px;height:3px;border-radius:2px;background:#1d4ed8;display:inline-block;"></span>
+                    Utilidad Neta
+                </span>
+            </div>
+            <svg viewBox="0 0 {ancho} {alto}" class="chart-svg" role="img" aria-label="Ganancias y pérdidas en el tiempo">
+                {"".join(grilla_partes)}
+                {"".join(barras_html)}
+                <polyline fill="none" stroke="#1d4ed8" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" points="{coords_neto}" />
+                {nodos_neto}
+                {"".join(etiquetas_x)}
+            </svg>
+        </div>
+        """
+    )
+
+
+def render_desglose_ganancias_perdidas(datos_gp: dict[str, Any]) -> None:
+    """Renderiza barras horizontales de Ganancia por Categoría y Pérdidas por Causa."""
+    cats = datos_gp.get("ganancia_por_categoria", [])
+    causas = datos_gp.get("perdidas_por_causa", [])
+
+    max_cat = max((float(c.get("ganancia", 0.0)) for c in cats), default=1.0) or 1.0
+    filas_cat = []
+    for c in cats:
+        ing = float(c.get("ingresos", 0.0))
+        gan = float(c.get("ganancia", 0.0))
+        margen = round((gan / ing) * 100.0, 1) if ing > 0 else 0.0
+        pct_w = max(4.0, min(100.0, (gan / max_cat) * 100.0)) if gan > 0 else 0.0
+        filas_cat.append(
+            f"""
+            <div style="margin-bottom:0.75rem;">
+                <div style="display:flex;justify-content:space-between;font-size:0.83rem;margin-bottom:0.22rem;">
+                    <strong style="color:#0f172a;">{esc(c["categoria"])}</strong>
+                    <span style="color:#15803d;font-weight:700;">{esc(moneda(gan))} <span style="color:#64748b;font-weight:500;">({margen}% margen)</span></span>
+                </div>
+                <div style="width:100%;height:9px;background:#f1f5f9;border-radius:999px;overflow:hidden;">
+                    <div style="width:{pct_w:.1f}%;height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);border-radius:999px;"></div>
+                </div>
+            </div>
+            """
+        )
+    html_cat = "".join(filas_cat) if filas_cat else '<div class="empty-state">Sin ventas registradas en el período.</div>'
+
+    max_causa = max((float(x.get("monto", 0.0)) for x in causas), default=1.0) or 1.0
+    filas_causas = []
+    for x in causas:
+        monto = float(x.get("monto", 0.0))
+        pct_w = max(5.0, min(100.0, (monto / max_causa) * 100.0)) if monto > 0 else 0.0
+        filas_causas.append(
+            f"""
+            <div style="margin-bottom:0.75rem;">
+                <div style="display:flex;justify-content:space-between;font-size:0.83rem;margin-bottom:0.22rem;">
+                    <strong style="color:#0f172a;">{esc(x["causa"])} <span style="color:#64748b;font-weight:500;">({x["unidades"]} uds / {x["eventos"]} ev.)</span></strong>
+                    <span style="color:#b91c1c;font-weight:700;">-{esc(moneda(monto))}</span>
+                </div>
+                <div style="width:100%;height:9px;background:#f1f5f9;border-radius:999px;overflow:hidden;">
+                    <div style="width:{pct_w:.1f}%;height:100%;background:linear-gradient(90deg,#b91c1c,#ef4444);border-radius:999px;"></div>
+                </div>
+            </div>
+            """
+        )
+    html_causas = "".join(filas_causas) if filas_causas else '<div class="empty-state">Sin pérdidas o mermas registradas en el período.</div>'
+
+    st.html(
+        f"""
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem;margin-top:0.4rem;">
+            <div class="card" style="margin-bottom:0;">
+                <div class="card-header">
+                    <div>
+                        <h2>Ganancia Bruta por Categoría</h2>
+                        <span class="card-subtitle">Contribución real descontando el costo de compra</span>
+                    </div>
+                </div>
+                {html_cat}
+            </div>
+            <div class="card card-perdida" style="margin-bottom:0;">
+                <div class="card-header">
+                    <div>
+                        <h2>Pérdidas y Mermas por Causa</h2>
+                        <span class="card-subtitle">Impacto económico valorizado a costo de bodega</span>
+                    </div>
+                </div>
+                {html_causas}
+            </div>
+        </div>
+        """
+    )
+
+
 def render_tabla_reabastecimiento(recomendaciones: list[dict[str, Any]]) -> None:
     """Renderiza el cálculo inteligente de reabastecimiento Necesario vs Recomendado."""
     if not recomendaciones:
