@@ -65,7 +65,7 @@ def render_sidebar_brand() -> None:
         <div class="sidebar-brand-card">
             <div class="sidebar-brand-logo">{_SVGS["store"]}</div>
             <div>
-                <div class="sidebar-brand-title">GestorPyME Pro</div>
+                <div class="sidebar-brand-title">Al Día</div>
                 <div class="sidebar-brand-sub">Suite Comercial &amp; POS</div>
             </div>
         </div>
@@ -79,7 +79,7 @@ def render_login_hero() -> None:
         f"""
         <div class="login-hero-card">
             <div class="brand-icon">{_SVGS["store"]}</div>
-            <h1>GestorPyME Pro</h1>
+            <h1>Al Día</h1>
             <p>Plataforma comercial de ventas, inventario FEFO y visión por computadora</p>
         </div>
         """
@@ -95,7 +95,7 @@ def render_topbar(
     es_admin = usuario.get("rol") == "Administrador"
     icono = _SVGS["store"] if es_admin else _SVGS["terminal"]
     titulo = titulo_seccion or (
-        "GestorPyME Pro — Panel Comercial"
+        "Al Día — Panel Comercial"
         if es_admin
         else "Punto de Venta y Caja Rápida"
     )

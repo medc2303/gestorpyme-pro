@@ -1047,7 +1047,7 @@ def _consultar_openfoodfacts_en_vivo(
             r = requests.get(
                 "https://search.openfoodfacts.org/search",
                 params={"q": q, "page_size": 5},
-                headers={"User-Agent": "GestorPyMEPro/2.0"},
+                headers={"User-Agent": "AlDia/2.0"},
                 timeout=4,
             )
             if r.status_code != 200:

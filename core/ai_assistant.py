@@ -89,7 +89,7 @@ def _formatear_prompt_sistema(ctx: dict[str, Any]) -> str:
         for b in ctx["baja_rotacion"][:5]
     ) or "  - Sin productos estancados relevantes."
 
-    return f"""Eres 'AsesorIA PyME', un consultor comercial experto para pequeñas y medianas empresas (almacenes, minimarkets y comercios detallistas en Chile).
+    return f"""Eres 'AsesorIA Al Día', un consultor comercial experto para pequeñas y medianas empresas (almacenes, minimarkets y comercios detallistas en Chile).
 Responde SIEMPRE en español claro, cercano, ejecutivo y accionable, usando formato Markdown con viñetas, negritas y cifras reales del negocio en pesos chilenos ($).
 Basa TODAS tus recomendaciones estrictamente en estos datos en vivo de la tienda:
 

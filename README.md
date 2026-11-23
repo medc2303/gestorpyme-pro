@@ -1,4 +1,4 @@
-# 🏪 GestorPyME Pro — MVP de Gestión de Ventas, Inventario y Caducidad
+# 🏪 Al Día — MVP de Gestión de Ventas, Inventario y Caducidad
 
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/deploy?repository=medc2303/gestorpyme-pro&branch=main&mainModule=app.py)
 

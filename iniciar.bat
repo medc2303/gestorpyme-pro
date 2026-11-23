@@ -1,10 +1,10 @@
 @echo off
 chcp 65001 >nul
-title GestorPyME Pro - Lanzador MVP (Streamlit sin SQL)
+title Al Día - Lanzador MVP (Streamlit sin SQL)
 cd /d "%~dp0"
 
 echo ============================================================================
-echo   INICIANDO GESTORPYME PRO - SISTEMA DE INVENTARIO, VENTAS Y CADUCIDAD
+echo   INICIANDO AL DÍA - SISTEMA DE INVENTARIO, VENTAS Y CADUCIDAD
 echo ============================================================================
 echo.
 

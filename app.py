@@ -1,5 +1,5 @@
 """
-GestorPyME Pro — Prototipo / MVP de Gestión de Ventas, Inventario y Caducidad.
+Al Día — Prototipo / MVP de Gestión de Ventas, Inventario y Caducidad.
 Desarrollado en Streamlit + HTML/CSS, 100% libre de SQL (persistencia JSON).
 Incluye:
   - Conversión automática de Caja / Lote -> Unidades individuales en inventario.
@@ -75,7 +75,7 @@ from core.ui_components import (
 )
 
 st.set_page_config(
-    page_title="GestorPyME Pro | Ventas, Inventario y Caducidad",
+    page_title="Al Día | Ventas, Inventario y Caducidad",
     page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
@@ -133,7 +133,7 @@ if "mensajes_ia" not in st.session_state:
         {
             "role": "assistant",
             "content": (
-                "Hola, soy **AsesorIA PyME**. Estoy conectado en tiempo real a tu inventario, "
+                "Hola, soy **AsesorIA Al Día**. Estoy conectado en tiempo real a tu inventario, "
                 "ventas y fechas de caducidad. Pregúntame qué comprar, qué ofertas activar o cómo armar combos."
             ),
             "motor": "Sistema Listo",
@@ -2493,7 +2493,7 @@ def render_chat_flotante_ia() -> None:
                 """
                 <div class="mini-chat-header">
                     <div>
-                        <div class="mini-chat-header-title">AsesorIA PyME</div>
+                        <div class="mini-chat-header-title">AsesorIA Al Día</div>
                         <div class="mini-chat-header-sub">Compras, ofertas FEFO y ventas en vivo</div>
                     </div>
                     <span class="mini-chat-pill">En línea</span>
